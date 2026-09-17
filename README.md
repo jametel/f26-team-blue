@@ -6,4 +6,4 @@
 - alannaiveyyy - Alanna Ivey - aivey004@odu.edu
 - spencerhall11- Spencer Hall -shall053@odu.edu
 - hayeslucas1 - Lucas Hayes - Lhaye005@odu.edu
-
+- beggl001 - Bea Eggleston - beggl001@odu.edu
