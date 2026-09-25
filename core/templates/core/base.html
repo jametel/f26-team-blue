@@ -1,0 +1,18 @@
+<head>
+    <title>{% block title %}Rhythmiq{% endblock %}</title>
+</head>
+<body>
+    <h1>Rhythmiq</h1>
+
+    <nav>
+        <a href="{% url 'home' %}">Home</a>
+        <a href="#">Music</a>
+        <a href="#">Playlists</a>
+        <a href="#">Search</a>
+        <a href="#">Profile</a>
+    </nav>
+
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+</body>
