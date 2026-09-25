@@ -136,3 +136,7 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+
+# Soundcharts
+SOUNDCHARTS_APP_ID = os.getenv("SOUNDCHARTS_APP_ID")
+SOUNDCHARTS_API_KEY = os.getenv("SOUNDCHARTS_API_KEY")

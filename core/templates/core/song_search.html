@@ -1,0 +1,18 @@
+{% extends "core/base.html" %}
+
+{% block title %}Rhythmiq — Search{% endblock %}
+
+{% block content %}
+    <form method="get">
+        <input type="text" name="q" value="{{ query }}" placeholder="Search songs">
+        <button type="submit">Search</button>
+    </form>
+
+    <ul>
+    {% for song in results %}
+        <li>{{ song.name }} — {{ song.artist.name }}</li>
+    {% empty %}
+        <li>No results{% if query %} for "{{ query }}"{% endif %}</li>
+    {% endfor %}
+    </ul>
+{% endblock %}
