@@ -1,11 +1,7 @@
 from django.contrib import admin
-from django.contrib.auth.models import Group, Permission
 
-# Register your models here.
-owner, created = Group.objects.get_or_create(name='Owner')
-staff, created = Group.objects.get_or_create(name='Staff')
-customer, created = Group.objects.get_or_create(name='Customer')
 
-full_permissions = Permission.objects.all()
-owner.permissions.set(full_permissions)
+# Register application models with the Django admin here.
+# User roles are created separately so the database is not
+# accessed when Django starts.
 
