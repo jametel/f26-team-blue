@@ -4,3 +4,16 @@
 # Python
 **/__pycache__
 .venv
+
+
+# Editor configs
+.vscode/
+.idea/
+
+# Python / Django local artifacts
+*.pyc
+*.sqlite3
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db

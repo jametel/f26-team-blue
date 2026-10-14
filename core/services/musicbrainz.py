@@ -33,5 +33,6 @@ class MusicBrainzClient:
             songs.append({
                 "name": rec.get("title", "Untitled"),
                 "artist": {"name": artist_name},
+                "musicbrainz_id": rec.get("id", ""),
             })
         return songs
