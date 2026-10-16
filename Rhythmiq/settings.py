@@ -68,6 +68,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'core.context_processors.role',
             ],
         },
     },
@@ -141,5 +142,5 @@ MAILERS = {
 
 # Authentication redirects
 LOGIN_URL = "login"
-LOGIN_REDIRECT_URL = "home"
+LOGIN_REDIRECT_URL = "dashboard"  # routes each user to their role dashboard
 LOGOUT_REDIRECT_URL = "home"

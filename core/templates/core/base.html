@@ -7,10 +7,18 @@
     <nav>
     <a href="{% url 'home' %}">Home</a>
     <a href="{% url 'song_search' %}">Search</a>
+    <a href="{% url 'customer_dashboard' %}">My Requests</a>
 
      {% if user.is_authenticated %}
 
-        <span>Logged in as {{ user.username }}</span>
+        {% if user_role == "Staff" or user_role == "Owner" %}
+            <a href="{% url 'staff_dashboard' %}">Staff</a>
+        {% endif %}
+        {% if user_role == "Owner" %}
+            <a href="{% url 'owner_dashboard' %}">Owner</a>
+        {% endif %}
+
+        <span>Logged in as {{ user.username }}{% if user_role %} ({{ user_role }}){% endif %}</span>
 
         <form method="post" action="{% url 'logout' %}" style="display: inline;">
             {% csrf_token %}
@@ -20,9 +28,18 @@
     {% else %}
 
         <a href="{% url 'login' %}">Login</a>
+        <a href="{% url 'register' %}">Register</a>
 
     {% endif %}
 </nav>
+
+    {% if messages %}
+    <ul class="messages">
+        {% for message in messages %}
+        <li>{{ message }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
 
     <main>
         {% block content %}{% endblock %}

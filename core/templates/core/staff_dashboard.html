@@ -6,12 +6,36 @@
 
 <h2>Staff Dashboard</h2>
 
-<p>Welcome to the Rhythmiq Staff Dashboard.</p>
+<h3>Pending Requests</h3>
+<ul>
+{% for r in pending %}
+    <li>
+        {{ r.song.title }} — {{ r.song.artist }}
+        (requested by {{ r.requested_by.username|default:"guest" }})
+        <form method="post" action="{% url 'update_request' r.id %}" style="display: inline;">
+            {% csrf_token %}
+            <button type="submit" name="status" value="Approved">Approve</button>
+            <button type="submit" name="status" value="Rejected">Reject</button>
+        </form>
+    </li>
+{% empty %}
+    <li>No pending requests.</li>
+{% endfor %}
+</ul>
 
-<h3>Song Requests</h3>
-<p>Customer song requests will appear here.</p>
-
-<h3>Queue Management</h3>
-<p>Staff will be able to manage the song queue here.</p>
+<h3>Queue (Approved)</h3>
+<ul>
+{% for r in approved %}
+    <li>
+        {{ r.song.title }} — {{ r.song.artist }}
+        <form method="post" action="{% url 'update_request' r.id %}" style="display: inline;">
+            {% csrf_token %}
+            <button type="submit" name="status" value="Played">Mark played</button>
+        </form>
+    </li>
+{% empty %}
+    <li>The queue is empty.</li>
+{% endfor %}
+</ul>
 
 {% endblock %}

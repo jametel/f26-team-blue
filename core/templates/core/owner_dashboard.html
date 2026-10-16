@@ -6,15 +6,41 @@
 
 <h2>Owner Dashboard</h2>
 
-<p>Welcome to the Rhythmiq Owner Dashboard.</p>
+<h3>Requests Overview</h3>
+<p>
+    Total: {{ total_requests }} —
+    Pending: {{ status_counts.Pending|default:0 }},
+    Approved: {{ status_counts.Approved|default:0 }},
+    Played: {{ status_counts.Played|default:0 }},
+    Rejected: {{ status_counts.Rejected|default:0 }}
+</p>
+<p><a href="{% url 'staff_dashboard' %}">Open the staff request queue</a></p>
 
-<h3>Venue Management</h3>
-<p>Venue management features will be added in a future sprint.</p>
+<h3>Users and Roles</h3>
+<table>
+    <tr><th>User</th><th>Role</th><th>Change role</th></tr>
+    {% for entry in users %}
+    <tr>
+        <td>{{ entry.user.username }}</td>
+        <td>{{ entry.role|default:"None" }}</td>
+        <td>
+            {% if entry.user != request.user and not entry.user.is_superuser %}
+            <form method="post" action="{% url 'set_user_role' entry.user.id %}">
+                {% csrf_token %}
+                <select name="role">
+                    {% for r in assignable_roles %}
+                    <option value="{{ r }}"{% if r == entry.role %} selected{% endif %}>{{ r }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit">Save</button>
+            </form>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</table>
 
-<h3>Vibe Management</h3>
-<p>Vibe controls will be added in a future sprint.</p>
-
-<h3>Revenue</h3>
-<p>Revenue information will be available here.</p>
+<h3>Venue and Vibe Management</h3>
+<p>These features will be added in a future sprint.</p>
 
 {% endblock %}
