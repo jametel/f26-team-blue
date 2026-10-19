@@ -1,6 +1,6 @@
 from django.shortcuts import render
 from core.decorators import role_required
-from core.models import Song
+from core.models import Song, SongRequest #allows accesss to both models
 from core.services.musicbrainz import MusicBrainzClient
 
 
@@ -50,7 +50,15 @@ def user_in_group(user, group_name):
 
 @role_required(["Staff", "Owner"])
 def staff_dashboard(request):
-    return render(request, "core/staff_dashboard.html")
+    song_requests = (
+        SongRequest.objects
+        .select_related("song")
+        .order_by("-requested_at")
+    )
+
+    return render(request, "core/staff_dashboard.html", {
+        "song_requests": song_requests,
+    }) #retrieve song requests, retrieve the associated song information, sort requests newest to oldest, send request to dashboard
 
 @role_required(["Owner"])
 def owner_dashboard(request):

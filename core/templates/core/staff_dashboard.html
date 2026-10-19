@@ -1,3 +1,4 @@
+
 {% extends "core/base.html" %}
 
 {% block title %}Staff Dashboard — Rhythmiq{% endblock %}
@@ -9,9 +10,34 @@
 <p>Welcome to the Rhythmiq Staff Dashboard.</p>
 
 <h3>Song Requests</h3>
-<p>Customer song requests will appear here.</p>
+
+{% if song_requests %}
+    <table border="1" cellpadding="10">
+        <thead>
+            <tr>
+                <th>Song</th>
+                <th>Artist</th>
+                <th>Requested At</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+
+        <tbody>
+            {% for song_request in song_requests %}
+                <tr>
+                    <td>{{ song_request.song.title }}</td>
+                    <td>{{ song_request.song.artist }}</td>
+                    <td>{{ song_request.requested_at }}</td>
+                    <td>{{ song_request.status }}</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% else %}
+    <p>No song requests have been submitted yet.</p>
+{% endif %}
 
 <h3>Queue Management</h3>
-<p>Staff will be able to manage the song queue here.</p>
+<p>Queue management controls will be added next.</p>
 
 {% endblock %}
