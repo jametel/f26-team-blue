@@ -1,0 +1,21 @@
+{% extends "core/base.html" %}
+
+{% block title %}My Requests — Rhythmiq{% endblock %}
+
+{% block content %}
+
+<h2>My Song Requests</h2>
+
+<p>No account needed. Requests are tracked in this browser session.</p>
+
+<p><a href="{% url 'song_search' %}">Search for a song to request</a></p>
+
+<ul>
+{% for r in requests %}
+    <li>{{ r.song.title }} — {{ r.song.artist }} ({{ r.status }})</li>
+{% empty %}
+    <li>You haven't requested any songs yet.</li>
+{% endfor %}
+</ul>
+
+{% endblock %}

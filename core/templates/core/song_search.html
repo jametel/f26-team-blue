@@ -10,7 +10,15 @@
 
     <ul>
     {% for song in results %}
-        <li>{{ song.name }} — {{ song.artist.name }}</li>
+        <li>
+            {{ song.name }} — {{ song.artist.name }}
+            {% if song.id %}
+            <form method="post" action="{% url 'request_song' song.id %}" style="display: inline;">
+                {% csrf_token %}
+                <button type="submit">Request</button>
+            </form>
+            {% endif %}
+        </li>
     {% empty %}
         <li>No results{% if query %} for "{{ query }}"{% endif %}</li>
     {% endfor %}

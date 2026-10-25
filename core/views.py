@@ -1,6 +1,14 @@
-from django.shortcuts import render
+from django.contrib import messages
+from django.contrib.auth import get_user_model, login
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.forms import UserCreationForm
+from django.db.models import Count, Q
+from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.http import require_POST
+
+from core import roles
 from core.decorators import role_required
-from core.models import Song, SongRequest #allows accesss to both models
+from core.models import Song, SongRequest
 from core.services.musicbrainz import MusicBrainzClient
 
 
@@ -11,6 +19,7 @@ def home(request):
 def _song_to_result(song):
     """Convert a persisted Song into the shape the template expects."""
     return {
+        "id": song.id,
         "name": song.title,
         "artist": {"name": song.artist},
         "musicbrainz_id": song.musicbrainz_id,
@@ -45,21 +54,148 @@ def song_search(request):
         "query": query,
         "results": results,
     })
-def user_in_group(user, group_name):
-     return user.is_authenticated and user.groups.filter(name=group_name).exists()
 
-@role_required(["Staff", "Owner"])
+
+# ---------------------------------------------------------------------------
+# Authentication (#8)
+# ---------------------------------------------------------------------------
+
+def register(request):
+    """Customer self-registration. New accounts always get the Customer role."""
+    if request.user.is_authenticated:
+        return redirect("dashboard")
+    form = UserCreationForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        user = form.save()
+        roles.set_role(user, roles.CUSTOMER)
+        login(request, user)
+        messages.success(request, "Welcome to Rhythmiq! Your account has been created.")
+        return redirect("dashboard")
+    return render(request, "core/register.html", {"form": form})
+
+
+@login_required
+def dashboard(request):
+    """Send each logged-in user to the dashboard for their role."""
+    role = roles.get_role(request.user)
+    if role == roles.OWNER:
+        return redirect("owner_dashboard")
+    if role == roles.STAFF:
+        return redirect("staff_dashboard")
+    return redirect("customer_dashboard")
+
+
+# ---------------------------------------------------------------------------
+# Customer (#7): no login needed. Patrons are identified by their session.
+# ---------------------------------------------------------------------------
+
+MAX_PENDING_PER_PATRON = 5
+
+
+def _patron_requests(request):
+    """Requests belonging to this visitor: their session, or their account."""
+    query = Q(session_key=request.session.session_key) if request.session.session_key else Q(pk__in=[])
+    if request.user.is_authenticated:
+        query |= Q(requested_by=request.user)
+    return SongRequest.objects.filter(query)
+
+
+def customer_dashboard(request):
+    my_requests = (
+        _patron_requests(request).select_related("song").order_by("-requested_at")
+    )
+    return render(request, "core/customer_dashboard.html", {"requests": my_requests})
+
+
+@require_POST
+def request_song(request, song_id):
+    song = get_object_or_404(Song, pk=song_id)
+    if not request.session.session_key:
+        request.session.create()
+
+    mine = _patron_requests(request)
+    if mine.filter(song=song, status=SongRequest.PENDING).exists():
+        messages.info(request, f"You already have a pending request for \"{song.title}\".")
+    elif mine.filter(status=SongRequest.PENDING).count() >= MAX_PENDING_PER_PATRON:
+        messages.error(
+            request,
+            f"You have {MAX_PENDING_PER_PATRON} pending requests. "
+            "Wait for some to be reviewed before adding more.",
+        )
+    else:
+        SongRequest.objects.create(
+            song=song,
+            session_key=request.session.session_key,
+            requested_by=request.user if request.user.is_authenticated else None,
+        )
+        messages.success(request, f"Requested \"{song.title}\".")
+    return redirect("customer_dashboard")
+
+
+# ---------------------------------------------------------------------------
+# Staff (#7): review the request queue
+# ---------------------------------------------------------------------------
+
+@role_required([roles.STAFF, roles.OWNER])
 def staff_dashboard(request):
     song_requests = (
         SongRequest.objects
-        .select_related("song")
+        .select_related("song", "requested_by")
         .order_by("-requested_at")
     )
-
     return render(request, "core/staff_dashboard.html", {
         "song_requests": song_requests,
-    }) #retrieve song requests, retrieve the associated song information, sort requests newest to oldest, send request to dashboard
+    })
 
-@role_required(["Owner"])
+
+@role_required([roles.STAFF, roles.OWNER])
+@require_POST
+def update_request(request, request_id):
+    song_request = get_object_or_404(SongRequest, pk=request_id)
+    new_status = request.POST.get("status")
+    if new_status not in (SongRequest.APPROVED, SongRequest.REJECTED, SongRequest.PLAYED):
+        messages.error(request, "Invalid status.")
+    else:
+        song_request.status = new_status
+        song_request.save(update_fields=["status"])
+        messages.success(request, f"\"{song_request.song.title}\" marked {new_status.lower()}.")
+    return redirect("staff_dashboard")
+
+
+# ---------------------------------------------------------------------------
+# Owner (#7): stats and role management
+# ---------------------------------------------------------------------------
+
+@role_required([roles.OWNER])
 def owner_dashboard(request):
-    return render(request, "core/owner_dashboard.html")
+    User = get_user_model()
+    status_counts = dict(
+        SongRequest.objects.values_list("status").annotate(n=Count("id"))
+    )
+    users = [
+        {"user": u, "role": roles.get_role(u)}
+        for u in User.objects.order_by("username")
+    ]
+    return render(request, "core/owner_dashboard.html", {
+        "status_counts": status_counts,
+        "total_requests": sum(status_counts.values()),
+        "users": users,
+        "assignable_roles": roles.ROLES,
+    })
+
+
+@role_required([roles.OWNER])
+@require_POST
+def set_user_role(request, user_id):
+    target = get_object_or_404(get_user_model(), pk=user_id)
+    new_role = request.POST.get("role")
+    if new_role not in roles.ROLES:
+        messages.error(request, "Invalid role.")
+    elif target == request.user:
+        messages.error(request, "You can't change your own role.")
+    elif target.is_superuser:
+        messages.error(request, "Superuser roles are managed in the admin site.")
+    else:
+        roles.set_role(target, new_role)
+        messages.success(request, f"{target.username} is now {new_role}.")
+    return redirect("owner_dashboard")
