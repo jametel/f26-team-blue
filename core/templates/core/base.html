@@ -5,40 +5,35 @@
     <h1>Rhythmiq</h1>
 
     <nav>
-    <a href="{% url 'home' %}">Home</a>
-    <a href="{% url 'song_search' %}">Search</a>
-    <a href="{% url 'customer_dashboard' %}">My Requests</a>
+        <a href="{% url 'home' %}">Home</a>
+        <a href="{% url 'song_search' %}">Search</a>
+        <a href="{% url 'customer_dashboard' %}">My Requests</a>
 
-     {% if user.is_authenticated %}
+        {% if user.is_authenticated %}
+            {% if user_role == "Staff" or user_role == "Owner" %}
+                <a href="{% url 'staff_dashboard' %}">Staff Dashboard</a>
+            {% endif %}
+            {% if user_role == "Owner" %}
+                <a href="{% url 'owner_dashboard' %}">Owner Dashboard</a>
+            {% endif %}
 
-        {% if user_role == "Staff" or user_role == "Owner" %}
-            <a href="{% url 'staff_dashboard' %}">Staff</a>
+            <span>Logged in as {{ user.username }}{% if user_role %} ({{ user_role }}){% endif %}</span>
+            <form method="post" action="{% url 'logout' %}" style="display: inline;">
+                {% csrf_token %}
+                <button type="submit">Logout</button>
+            </form>
+        {% else %}
+            <a href="{% url 'login' %}">Login</a>
+            <a href="{% url 'register' %}">Register</a>
         {% endif %}
-        {% if user_role == "Owner" %}
-            <a href="{% url 'owner_dashboard' %}">Owner</a>
-        {% endif %}
-
-        <span>Logged in as {{ user.username }}{% if user_role %} ({{ user_role }}){% endif %}</span>
-
-        <form method="post" action="{% url 'logout' %}" style="display: inline;">
-            {% csrf_token %}
-            <button type="submit">Logout</button>
-        </form>
-
-    {% else %}
-
-        <a href="{% url 'login' %}">Login</a>
-        <a href="{% url 'register' %}">Register</a>
-
-    {% endif %}
-</nav>
+    </nav>
 
     {% if messages %}
-    <ul class="messages">
-        {% for message in messages %}
-        <li>{{ message }}</li>
-        {% endfor %}
-    </ul>
+        <ul class="messages">
+            {% for message in messages %}
+                <li>{{ message }}</li>
+            {% endfor %}
+        </ul>
     {% endif %}
 
     <main>

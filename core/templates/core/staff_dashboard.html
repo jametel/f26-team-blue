@@ -1,3 +1,4 @@
+
 {% extends "core/base.html" %}
 
 {% block title %}Staff Dashboard — Rhythmiq{% endblock %}
@@ -6,36 +7,46 @@
 
 <h2>Staff Dashboard</h2>
 
-<h3>Pending Requests</h3>
-<ul>
-{% for r in pending %}
-    <li>
-        {{ r.song.title }} — {{ r.song.artist }}
-        (requested by {{ r.requested_by.username|default:"guest" }})
-        <form method="post" action="{% url 'update_request' r.id %}" style="display: inline;">
-            {% csrf_token %}
-            <button type="submit" name="status" value="Approved">Approve</button>
-            <button type="submit" name="status" value="Rejected">Reject</button>
-        </form>
-    </li>
-{% empty %}
-    <li>No pending requests.</li>
-{% endfor %}
-</ul>
-
-<h3>Queue (Approved)</h3>
-<ul>
-{% for r in approved %}
-    <li>
-        {{ r.song.title }} — {{ r.song.artist }}
-        <form method="post" action="{% url 'update_request' r.id %}" style="display: inline;">
-            {% csrf_token %}
-            <button type="submit" name="status" value="Played">Mark played</button>
-        </form>
-    </li>
-{% empty %}
-    <li>The queue is empty.</li>
-{% endfor %}
-</ul>
-
+<h3>Song Requests</h3>
+{% if song_requests %}
+    <table border="1" cellpadding="10">
+        <thead>
+            <tr>
+                <th>Song</th>
+                <th>Artist</th>
+                <th>Requested At</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for song_request in song_requests %}
+                <tr>
+                    <td>{{ song_request.song.title }}</td>
+                    <td>{{ song_request.song.artist }}</td>
+                    <td>{{ song_request.requested_at }}</td>
+                    <td>{{ song_request.status }}</td>
+                    <td>
+                        {% if song_request.status == "Pending" %}
+                            <form method="post" action="{% url 'update_request' song_request.id %}" style="display: inline;">
+                                {% csrf_token %}
+                                <button type="submit" name="status" value="Approved">Approve</button>
+                                <button type="submit" name="status" value="Rejected">Reject</button>
+                            </form>
+                        {% elif song_request.status == "Approved" %}
+                            <form method="post" action="{% url 'update_request' song_request.id %}" style="display: inline;">
+                                {% csrf_token %}
+                                <button type="submit" name="status" value="Played">Mark played</button>
+                            </form>
+                        {% else %}
+                            No actions available
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% else %}
+    <p>No song requests have been submitted yet.</p>
+{% endif %}
 {% endblock %}

@@ -138,10 +138,13 @@ def request_song(request, song_id):
 
 @role_required([roles.STAFF, roles.OWNER])
 def staff_dashboard(request):
-    queue = SongRequest.objects.select_related("song", "requested_by")
+    song_requests = (
+        SongRequest.objects
+        .select_related("song", "requested_by")
+        .order_by("-requested_at")
+    )
     return render(request, "core/staff_dashboard.html", {
-        "pending": queue.filter(status=SongRequest.PENDING).order_by("requested_at"),
-        "approved": queue.filter(status=SongRequest.APPROVED).order_by("requested_at"),
+        "song_requests": song_requests,
     })
 
 
