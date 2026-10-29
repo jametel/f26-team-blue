@@ -1,19 +1,40 @@
+
 {% extends "core/base.html" %}
 
-{% block title %}Register — Rhythmiq{% endblock %}
+{% block title %}Register - Rythmiq{% endblock %}
 
 {% block content %}
 
-<h2>Create an account</h2>
+<section class="auth-wrap">
+    <div class="panel auth-card">
 
-<form method="post">
-    {% csrf_token %}
+        <p class="eyebrow">JOIN RYTHMIQ</p>
 
-    {{ form.as_p }}
+        <h1>Create an account</h1>
 
-    <button type="submit">Register</button>
-</form>
+        <p class="muted">
+            Join the experience. Your music, your vibe.
+        </p>
 
-<p>Already have an account? <a href="{% url 'login' %}">Log in</a></p>
+        <form method="post" class="auth-form">
+            {% csrf_token %}
+
+            {{ form.as_p }}
+
+            <button type="submit"
+                    class="btn btn-primary full-width">
+                Create account
+            </button>
+        </form>
+
+        <p class="muted" style="margin-top: 24px;">
+            Already have an account?
+            <a href="{% url 'login' %}" class="muted-link">
+                Log in
+            </a>
+        </p>
+
+    </div>
+</section>
 
 {% endblock %}
