@@ -227,7 +227,11 @@ def change_queue(request, venue_slug, entry_id):
         if action in ('up', 'down'):
             move_queue_entry(venue, entry.pk, action)
         elif action == 'priority':
-            set_queue_priority(venue, entry.pk, int(request.POST.get('priority', '')))
+            try:
+                priority = int(request.POST.get('priority', ''))
+            except ValueError:
+                raise ValueError('Priority must be a number between -10 and 10.') from None
+            set_queue_priority(venue, entry.pk, priority)
         elif action == 'remove':
             update_request_status(venue, entry.song_request_id_id, SongRequest.REMOVED)
         else:

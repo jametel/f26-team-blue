@@ -497,6 +497,18 @@ class QueueTests(TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertTrue(Queue.objects.filter(pk=entry.pk).exists())
 
+    def test_invalid_priority_shows_a_readable_error(self):
+        update_request_status(self.venue, self.requests[0].pk, SongRequest.APPROVED)
+        entry = Queue.objects.get(song_request_id=self.requests[0])
+        self.client.login(username='queue_staff', password=PASSWORD)
+        response = self.client.post(
+            reverse('venue_change_queue', args=[self.venue.slug, entry.pk]),
+            {'action': 'priority', 'priority': 'invalid'}, follow=True,
+        )
+        self.assertContains(response, 'Priority must be a number between -10 and 10.')
+        entry.refresh_from_db()
+        self.assertEqual(entry.priority, 0)
+
 
 class SearchReliabilityTests(TestCase):
     @patch('core.services.musicbrainz.requests.get', side_effect=requests.Timeout())
