@@ -12,6 +12,7 @@ urlpatterns = [
     path("venues/<slug:venue_slug>/owner/", views.owner_dashboard, name="venue_owner_dashboard"),
     path("venues/<slug:venue_slug>/requests/<int:request_id>/status/", views.update_request, name="venue_update_request"),
     path("venues/<slug:venue_slug>/users/<int:user_id>/role/", views.set_user_role, name="venue_set_user_role"),
+    path("venues/<slug:venue_slug>/queue/<int:entry_id>/", views.change_queue, name="venue_change_queue"),
     path("search/", views.song_search, name="song_search"),
      # Authentication
     path(

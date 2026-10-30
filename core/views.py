@@ -4,14 +4,15 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
 from django.db import transaction
 from django.db.models import Count, Prefetch, Q
-from django.http import HttpResponseForbidden
+from django.http import Http404, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from core import roles
 from core.decorators import role_required
-from core.models import Song, SongDecision, SongRequest, UserProfile, Venue
+from core.models import Queue, Song, SongDecision, SongRequest, UserProfile, Venue
 from core.services.musicbrainz import MusicBrainzClient
+from core.services.queue import move_queue_entry, set_queue_priority, update_request_status
 from core.services.vibe_engine import evaluate_request, record_decision
 from core.venue_context import current_venue
 
@@ -185,6 +186,8 @@ def staff_dashboard(request, venue_slug=None):
     )
     return render(request, "core/staff_dashboard.html", {
         "song_requests": song_requests,
+        "queue": Queue.objects.filter(venue_id=venue)
+        .select_related('song_request_id__song_id').order_by('-priority', 'position', 'pk'),
     })
 
 
@@ -196,17 +199,38 @@ def update_request(request, request_id, venue_slug=None):
         return HttpResponseForbidden("You cannot manage this venue.")
     song_request = get_object_or_404(SongRequest, pk=request_id, venue_id=venue)
     new_status = request.POST.get("status")
-    transitions = {
-        SongRequest.PENDING: {SongRequest.APPROVED, SongRequest.REJECTED},
-        SongRequest.APPROVED: {SongRequest.PLAYED},
-    }
-    if new_status not in transitions.get(song_request.status, set()):
-        messages.error(request, "Invalid status.")
-    else:
-        song_request.status = new_status
-        song_request.save(update_fields=["status"])
+    try:
+        update_request_status(venue, song_request.pk, new_status)
         messages.success(request, f"\"{song_request.song_id.title}\" marked {new_status.lower()}.")
+    except ValueError as error:
+        messages.error(request, str(error))
+    except SongRequest.DoesNotExist:
+        raise Http404('Request not found.')
     return redirect("venue_staff_dashboard", venue_slug=venue.slug)
+
+
+@role_required([roles.STAFF, roles.OWNER])
+@require_POST
+def change_queue(request, venue_slug, entry_id):
+    venue = current_venue(request, venue_slug)
+    if not roles.can_manage_venue(request.user, venue):
+        return HttpResponseForbidden("You cannot manage this venue.")
+    entry = get_object_or_404(Queue, pk=entry_id, venue_id=venue, song_request_id__venue_id=venue)
+    action = request.POST.get('action')
+    try:
+        if action in ('up', 'down'):
+            move_queue_entry(venue, entry.pk, action)
+        elif action == 'priority':
+            set_queue_priority(venue, entry.pk, int(request.POST.get('priority', '')))
+        elif action == 'remove':
+            update_request_status(venue, entry.song_request_id_id, SongRequest.REMOVED)
+        else:
+            raise ValueError('Invalid queue action.')
+    except ValueError as error:
+        messages.error(request, str(error))
+    except (Queue.DoesNotExist, SongRequest.DoesNotExist):
+        raise Http404('Queue entry not found.')
+    return redirect('venue_staff_dashboard', venue_slug=venue.slug)
 
 
 # ---------------------------------------------------------------------------

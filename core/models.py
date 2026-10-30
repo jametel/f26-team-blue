@@ -96,6 +96,7 @@ class SongRequest(models.Model):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
     PLAYED = "PLAYED"
+    REMOVED = "REMOVED"
     id = models.AutoField(primary_key=True)
     user_id = models.ForeignKey(UserProfile, on_delete=models.SET_NULL, null=True, blank=True)
     venue_id = models.ForeignKey(Venue, on_delete=models.PROTECT, null=True, blank=True)
@@ -109,6 +110,7 @@ class SongRequest(models.Model):
         ("APPROVED", "Approved"),
         ("REJECTED", "Rejected"),
         ("PLAYED", "Played"),
+        ("REMOVED", "Removed"),
     ], default="PENDING")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -170,6 +172,14 @@ class Queue(models.Model):
     venue_id = models.ForeignKey(Venue, on_delete=models.CASCADE)
     song_request_id = models.ForeignKey(SongRequest, on_delete=models.CASCADE)
     added_at = models.DateTimeField(auto_now_add=True)
+    position = models.PositiveIntegerField()
+    priority = models.SmallIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['venue_id', 'position'], name='unique_venue_queue_position'),
+            models.UniqueConstraint(fields=['song_request_id'], name='unique_queued_request'),
+        ]
 
 class Payments(models.Model):
     STATUS_CHOICES = [
