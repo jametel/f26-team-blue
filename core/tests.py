@@ -3,12 +3,14 @@ from django.contrib.auth.models import Group
 from django.db import IntegrityError, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.loader import MigrationLoader
+from django.core.exceptions import ValidationError
 from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
 from unittest.mock import patch
 
 from core import roles
-from core.models import Song, SongRequest, Venue, VenueConfig
+from core.models import Song, SongFeatures, SongRequest, Venue, VenueConfig
+from core.services.song_features import FeatureData, get_song_features, refresh_song_features
 
 User = get_user_model()
 PASSWORD = "pw-12345"
@@ -220,8 +222,7 @@ class RequestFlowTests(TestCase):
         response = self.client.get(reverse("song_search"), {"q": "New song"})
         self.assertContains(response, "New song")
         song = Song.objects.get(musicbrainz_id="new-id")
-        self.assertIsNone(song.BPM)
-        self.assertIsNone(song.is_explicit)
+        self.assertIsNone(get_song_features(song))
 
 
 class OwnerRoleManagementTests(TestCase):
@@ -288,6 +289,35 @@ class VenuePolicyTests(TestCase):
             VenueConfig.objects.create(venue=self.venue, min_bpm=120, max_bpm=80)
 
 
+class SongFeaturesTests(TestCase):
+    def setUp(self):
+        self.song = Song.objects.create(title='Metadata song', artist='Artist', musicbrainz_id='metadata')
+
+    def test_refresh_saves_valid_provider_data(self):
+        provider = type('Provider', (), {'fetch': lambda self, song: FeatureData(
+            source='manual', genre='Jazz', bpm=90, is_explicit=False,
+        )})()
+        features = refresh_song_features(self.song, provider)
+        self.assertEqual(features.bpm, 90)
+        self.assertIs(features.is_explicit, False)
+        self.assertEqual(features.source, 'manual')
+        self.assertIsNotNone(features.refreshed_at)
+        self.assertEqual(get_song_features(self.song).pk, features.pk)
+
+    def test_unavailable_provider_keeps_cached_data(self):
+        cached = SongFeatures.objects.create(song=self.song, source='manual', bpm=100)
+        provider = type('Provider', (), {'fetch': lambda self, song: None})()
+        self.assertEqual(refresh_song_features(self.song, provider).pk, cached.pk)
+        self.assertEqual(get_song_features(self.song).bpm, 100)
+
+    def test_invalid_provider_data_does_not_replace_the_cache(self):
+        SongFeatures.objects.create(song=self.song, source='manual', bpm=100)
+        provider = type('Provider', (), {'fetch': lambda self, song: FeatureData(source='bad', bpm=-1)})()
+        with self.assertRaises(ValidationError):
+            refresh_song_features(self.song, provider)
+        self.assertEqual(get_song_features(self.song).bpm, 100)
+
+
 class VenueRequestIsolationTests(TestCase):
     def setUp(self):
         self.owner = make_user('owner_a', roles.OWNER)
@@ -352,7 +382,7 @@ class RequestMigrationTests(TransactionTestCase):
         return executor.loader.project_state([('core', target)]).apps
 
     def tearDown(self):
-        self.migrate_to('0010_request_venue_constraint')
+        self.migrate_to('0013_remove_song_metadata')
         super().tearDown()
 
     def test_upgrade_from_0004_preserves_request_identity(self):
@@ -414,3 +444,16 @@ class RequestMigrationTests(TransactionTestCase):
         restored = current.get_model('core', 'Venue').objects.get(pk=venue.pk)
         self.assertEqual(restored.slug, f'old-venue-{venue.pk}')
         self.assertIsNone(restored.owner_id)
+
+    def test_existing_metadata_is_preserved_as_unverified(self):
+        old = self.migrate_to('0010_request_venue_constraint')
+        song = old.get_model('core', 'Song').objects.create(
+            title='Legacy', artist='Artist', musicbrainz_id='legacy-features',
+            genre='Jazz', BPM=95, is_explicit=False,
+        )
+        current = self.migrate_to('0013_remove_song_metadata')
+        features = current.get_model('core', 'SongFeatures').objects.get(song_id=song.pk)
+        self.assertEqual(features.genre, 'Jazz')
+        self.assertEqual(features.bpm, 95)
+        self.assertFalse(features.is_explicit)
+        self.assertEqual(features.source, 'legacy-unverified')

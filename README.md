@@ -32,3 +32,8 @@ enforce it when implemented.
 
 Each venue's public entry URL is `/venues/<slug>/`. Staff and owners select a
 venue before opening its dashboard. Assign owners and staff in Django admin.
+
+Song metadata is stored in `SongFeatures`. Values migrated from the old Song
+fields are marked `legacy-unverified` because their original source is unknown.
+`core.services.song_features` provides cache lookup and a refresh interface for
+providers. No BPM, mood, or explicit-content provider is configured yet.
