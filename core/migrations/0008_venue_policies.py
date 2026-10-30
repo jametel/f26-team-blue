@@ -22,7 +22,7 @@ class Migration(migrations.Migration):
     operations = [
         migrations.AddField(
             model_name='venue', name='slug',
-            field=models.SlugField(max_length=100, null=True, blank=True),
+            field=models.CharField(max_length=100, null=True, blank=True),
         ),
         migrations.RunPython(assign_venue_slugs, migrations.RunPython.noop),
         migrations.AlterField(

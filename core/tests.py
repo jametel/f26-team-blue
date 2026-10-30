@@ -1,6 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
-from django.db import connection
+from django.db import IntegrityError, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.loader import MigrationLoader
 from django.test import TestCase, TransactionTestCase
@@ -8,7 +8,7 @@ from django.urls import reverse
 from unittest.mock import patch
 
 from core import roles
-from core.models import Song, SongRequest
+from core.models import Song, SongRequest, Venue, VenueConfig
 
 User = get_user_model()
 PASSWORD = "pw-12345"
@@ -227,6 +227,39 @@ class OwnerRoleManagementTests(TestCase):
         self.assertEqual(roles.get_role(self.target), roles.CUSTOMER)
 
 
+class VenuePolicyTests(TestCase):
+    def setUp(self):
+        self.owner = make_user('venue_owner', roles.OWNER)
+        self.staff = make_user('venue_staff', roles.STAFF)
+        self.other = make_user('other_staff', roles.STAFF)
+        self.venue = Venue.objects.create(name='Coffee House', owner=self.owner)
+        self.venue.staff.add(self.staff)
+
+    def test_slug_is_unique_for_venues_with_the_same_name(self):
+        other_venue = Venue.objects.create(name='Coffee House')
+        self.assertTrue(self.venue.slug.startswith('coffee-house-'))
+        self.assertNotEqual(self.venue.slug, other_venue.slug)
+
+    def test_venue_access_requires_ownership_or_staff_membership(self):
+        self.assertTrue(roles.can_manage_venue(self.owner, self.venue))
+        self.assertTrue(roles.can_manage_venue(self.staff, self.venue))
+        self.assertFalse(roles.can_manage_venue(self.other, self.venue))
+        other_venue = Venue.objects.create(name='Another venue', owner=self.other)
+        self.assertFalse(roles.can_manage_venue(self.staff, other_venue))
+        customer = make_user('venue_customer', roles.CUSTOMER)
+        self.venue.staff.add(customer)
+        self.assertFalse(roles.can_manage_venue(customer, self.venue))
+
+    def test_default_unknown_policy_requires_staff_review(self):
+        config = VenueConfig.objects.create(venue=self.venue)
+        self.assertEqual(config.unknown_policy, VenueConfig.UnknownPolicy.REVIEW)
+        self.assertFalse(config.allow_explicit)
+
+    def test_database_rejects_invalid_bpm_range(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            VenueConfig.objects.create(venue=self.venue, min_bpm=120, max_bpm=80)
+
+
 class RequestMigrationTests(TransactionTestCase):
     def migrate_to(self, target, replace_migrations=True):
         executor = MigrationExecutor(connection)
@@ -236,7 +269,7 @@ class RequestMigrationTests(TransactionTestCase):
         return executor.loader.project_state([('core', target)]).apps
 
     def tearDown(self):
-        self.migrate_to('0007_restore_request_identity')
+        self.migrate_to('0008_venue_policies')
         super().tearDown()
 
     def test_upgrade_from_0004_preserves_request_identity(self):
@@ -286,3 +319,11 @@ class RequestMigrationTests(TransactionTestCase):
         self.assertEqual(restored.venue_id_id, venue.pk)
         self.assertEqual(restored.user_id_id, profile.pk)
         self.assertIsNone(restored.requested_by_id)
+
+    def test_existing_venue_receives_a_public_slug(self):
+        old = self.migrate_to('0007_restore_request_identity')
+        venue = old.get_model('core', 'Venue').objects.create(name='Old venue')
+        current = self.migrate_to('0008_venue_policies')
+        restored = current.get_model('core', 'Venue').objects.get(pk=venue.pk)
+        self.assertEqual(restored.slug, f'old-venue-{venue.pk}')
+        self.assertIsNone(restored.owner_id)
