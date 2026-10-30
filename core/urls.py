@@ -4,6 +4,15 @@ from . import views
 
 urlpatterns = [
     path("", views.home, name="home"),
+    path("venues/<slug:venue_slug>/", views.select_venue, name="select_venue"),
+    path("venues/<slug:venue_slug>/search/", views.song_search, name="venue_song_search"),
+    path("venues/<slug:venue_slug>/my-requests/", views.customer_dashboard, name="venue_customer_dashboard"),
+    path("venues/<slug:venue_slug>/requests/new/<int:song_id>/", views.request_song, name="venue_request_song"),
+    path("venues/<slug:venue_slug>/staff/", views.staff_dashboard, name="venue_staff_dashboard"),
+    path("venues/<slug:venue_slug>/owner/", views.owner_dashboard, name="venue_owner_dashboard"),
+    path("venues/<slug:venue_slug>/requests/<int:request_id>/status/", views.update_request, name="venue_update_request"),
+    path("venues/<slug:venue_slug>/users/<int:user_id>/role/", views.set_user_role, name="venue_set_user_role"),
+    path("venues/<slug:venue_slug>/queue/<int:entry_id>/", views.change_queue, name="venue_change_queue"),
     path("search/", views.song_search, name="song_search"),
      # Authentication
     path(

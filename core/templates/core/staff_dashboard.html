@@ -53,13 +53,19 @@
                         <span class="status-pill">
                             {{ song_request.get_status_display }}
                         </span>
+                        {% with decision=song_request.vibe_decisions.0 %}
+                            {% if decision %}
+                                <p>{{ decision.get_outcome_display }}</p>
+                                {% if decision.reasons %}<p>Reasons: {{ decision.reasons|join:", " }}</p>{% endif %}
+                            {% endif %}
+                        {% endwith %}
                     </td>
 
                     <td>
                         {% if song_request.status == "PENDING" %}
 
                         <form method="post"
-                              action="{% url 'update_request' song_request.id %}"
+                              action="{% url 'venue_update_request' current_venue.slug song_request.id %}"
                               class="action-form">
                             {% csrf_token %}
 
@@ -81,7 +87,7 @@
                         {% elif song_request.status == "APPROVED" %}
 
                         <form method="post"
-                              action="{% url 'update_request' song_request.id %}">
+                              action="{% url 'venue_update_request' current_venue.slug song_request.id %}">
                             {% csrf_token %}
 
                             <button type="submit"
@@ -112,6 +118,32 @@
 
     {% endif %}
 
+</section>
+
+<section class="panel dashboard-panel">
+    <h2>Approved queue</h2>
+    <p>Higher priority plays first. Move entries within the same priority.</p>
+    {% for entry in queue %}
+        <div class="song-item">
+            <div class="song-info">
+                <strong>{{ entry.song_request_id.song_id.title }}</strong>
+                <p>{{ entry.song_request_id.song_id.artist }} | Priority {{ entry.priority }}</p>
+            </div>
+            <form method="post" action="{% url 'venue_change_queue' current_venue.slug entry.id %}" class="action-form">
+                {% csrf_token %}
+                <button name="action" value="up" type="submit">Move up</button>
+                <button name="action" value="down" type="submit">Move down</button>
+                <button name="action" value="remove" type="submit">Remove</button>
+            </form>
+            <form method="post" action="{% url 'venue_change_queue' current_venue.slug entry.id %}" class="action-form">
+                {% csrf_token %}
+                <label>Priority <input type="number" name="priority" value="{{ entry.priority }}" min="-10" max="10"></label>
+                <button name="action" value="priority" type="submit">Set priority</button>
+            </form>
+        </div>
+    {% empty %}
+        <p>No approved songs in the queue.</p>
+    {% endfor %}
 </section>
 
 {% endblock %}

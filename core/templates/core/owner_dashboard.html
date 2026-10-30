@@ -52,7 +52,7 @@
 
         </div>
 
-        <a href="{% url 'staff_dashboard' %}"
+        <a href="{% url 'venue_staff_dashboard' current_venue.slug %}"
            class="btn btn-primary btn-small">
             Open Staff Queue
         </a>
@@ -96,7 +96,7 @@
                             {% if entry.user != request.user and not entry.user.is_superuser %}
 
                             <form method="post"
-                                  action="{% url 'set_user_role' entry.user.id %}"
+                                  action="{% url 'venue_set_user_role' current_venue.slug entry.user.id %}"
                                   class="action-form">
                                 {% csrf_token %}
 

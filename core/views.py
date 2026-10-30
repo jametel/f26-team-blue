@@ -2,18 +2,28 @@ from django.contrib import messages
 from django.contrib.auth import get_user_model, login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
-from django.db.models import Count, Q
+from django.db import transaction
+from django.db.models import Count, Prefetch, Q
+from django.http import Http404, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from core import roles
 from core.decorators import role_required
-from core.models import Song, SongRequest
-from core.services.musicbrainz import MusicBrainzClient
+from core.models import Queue, Song, SongDecision, SongRequest, UserProfile, Venue
+from core.services.musicbrainz import MusicBrainzClient, MusicBrainzError
+from core.services.queue import move_queue_entry, set_queue_priority, update_request_status
+from core.services.vibe_engine import evaluate_request, record_decision
+from core.venue_context import current_venue
 
 
 def home(request):
-    return render(request, 'core/home.html')
+    return render(request, 'core/home.html', {'venues': Venue.objects.order_by('name')})
+
+
+def select_venue(request, venue_slug):
+    venue = current_venue(request, venue_slug)
+    return redirect('venue_song_search', venue_slug=venue.slug)
 
 
 def _song_to_result(song):
@@ -26,9 +36,11 @@ def _song_to_result(song):
     }
 
 
-def song_search(request):
+def song_search(request, venue_slug=None):
+    venue = current_venue(request, venue_slug)
     query = request.GET.get("q", "")
     results = []
+    search_error = False
     if query:
         # Issue #2 (static song search): serve from the local database first so
         # repeated searches don't hit MusicBrainz. When the library is empty for
@@ -36,8 +48,12 @@ def song_search(request):
         # static on the next search.
         local = Song.objects.filter(title__icontains=query).order_by("-id")[:10]
         if not local.exists():
-            client = MusicBrainzClient()
-            for item in client.search_songs(query):
+            try:
+                songs = MusicBrainzClient().search_songs(query)
+            except MusicBrainzError:
+                songs = []
+                search_error = True
+            for item in songs:
                 mb_id = item.get("musicbrainz_id", "")
                 if not mb_id:
                     continue
@@ -53,6 +69,8 @@ def song_search(request):
     return render(request, "core/song_search.html", {
         "query": query,
         "results": results,
+        "venue": venue,
+        "search_error": search_error,
     })
 
 
@@ -92,29 +110,37 @@ def dashboard(request):
 MAX_PENDING_PER_PATRON = 5
 
 
-def _patron_requests(request):
+def _patron_requests(request, venue):
     """Requests belonging to this visitor: their session, or their account."""
     query = Q(session_key=request.session.session_key) if request.session.session_key else Q(pk__in=[])
     if request.user.is_authenticated:
         query |= Q(requested_by=request.user)
-    return SongRequest.objects.filter(query)
+    return SongRequest.objects.filter(query, venue_id=venue)
 
 
-def customer_dashboard(request):
+def customer_dashboard(request, venue_slug=None):
+    venue = current_venue(request, venue_slug)
+    if not venue:
+        messages.info(request, "Choose a venue to see your requests.")
+        return redirect('home')
     my_requests = (
-        _patron_requests(request).select_related("song").order_by("-requested_at")
+        _patron_requests(request, venue).select_related("song_id").order_by("-created_at")
     )
     return render(request, "core/customer_dashboard.html", {"requests": my_requests})
 
 
 @require_POST
-def request_song(request, song_id):
+def request_song(request, song_id, venue_slug=None):
+    venue = current_venue(request, venue_slug)
+    if not venue:
+        messages.info(request, "Choose a venue before requesting a song.")
+        return redirect('home')
     song = get_object_or_404(Song, pk=song_id)
     if not request.session.session_key:
         request.session.create()
 
-    mine = _patron_requests(request)
-    if mine.filter(song=song, status=SongRequest.PENDING).exists():
+    mine = _patron_requests(request, venue)
+    if mine.filter(song_id=song, status=SongRequest.PENDING).exists():
         messages.info(request, f"You already have a pending request for \"{song.title}\".")
     elif mine.filter(status=SongRequest.PENDING).count() >= MAX_PENDING_PER_PATRON:
         messages.error(
@@ -123,13 +149,26 @@ def request_song(request, song_id):
             "Wait for some to be reviewed before adding more.",
         )
     else:
-        SongRequest.objects.create(
-            song=song,
-            session_key=request.session.session_key,
-            requested_by=request.user if request.user.is_authenticated else None,
-        )
-        messages.success(request, f"Requested \"{song.title}\".")
-    return redirect("customer_dashboard")
+        decision = evaluate_request(venue, song)
+        with transaction.atomic():
+            song_request = None
+            if decision.outcome != SongDecision.Outcome.REJECT:
+                song_request = SongRequest.objects.create(
+                    song_id=song,
+                    venue_id=venue,
+                    session_key=request.session.session_key,
+                    requested_by=request.user if request.user.is_authenticated else None,
+                    user_id=UserProfile.objects.get_or_create(user=request.user)[0]
+                    if request.user.is_authenticated else None,
+                )
+            record_decision(venue, song, decision, song_request)
+        if decision.outcome == SongDecision.Outcome.REJECT:
+            messages.error(request, f"{song.title} does not meet this venue's music settings.")
+        elif decision.outcome == SongDecision.Outcome.REVIEW:
+            messages.info(request, f"{song.title} needs staff review.")
+        else:
+            messages.success(request, f"Requested \"{song.title}\".")
+    return redirect("venue_customer_dashboard", venue_slug=venue.slug)
 
 
 # ---------------------------------------------------------------------------
@@ -137,29 +176,71 @@ def request_song(request, song_id):
 # ---------------------------------------------------------------------------
 
 @role_required([roles.STAFF, roles.OWNER])
-def staff_dashboard(request):
+def staff_dashboard(request, venue_slug=None):
+    venue = current_venue(request, venue_slug)
+    if not venue:
+        messages.info(request, "Choose a venue to manage requests.")
+        return redirect('home')
+    if not roles.can_manage_venue(request.user, venue):
+        return HttpResponseForbidden("You cannot manage this venue.")
     song_requests = (
-        SongRequest.objects
-        .select_related("song", "requested_by")
-        .order_by("-requested_at")
+        SongRequest.objects.filter(venue_id=venue)
+        .select_related("song_id", "requested_by")
+        .prefetch_related(Prefetch('decisions', queryset=SongDecision.objects.order_by('-created_at'),
+                                   to_attr='vibe_decisions'))
+        .order_by("-created_at")
     )
     return render(request, "core/staff_dashboard.html", {
         "song_requests": song_requests,
+        "queue": Queue.objects.filter(venue_id=venue)
+        .select_related('song_request_id__song_id').order_by('-priority', 'position', 'pk'),
     })
 
 
 @role_required([roles.STAFF, roles.OWNER])
 @require_POST
-def update_request(request, request_id):
-    song_request = get_object_or_404(SongRequest, pk=request_id)
+def update_request(request, request_id, venue_slug=None):
+    venue = current_venue(request, venue_slug)
+    if not venue or not roles.can_manage_venue(request.user, venue):
+        return HttpResponseForbidden("You cannot manage this venue.")
+    song_request = get_object_or_404(SongRequest, pk=request_id, venue_id=venue)
     new_status = request.POST.get("status")
-    if new_status not in (SongRequest.APPROVED, SongRequest.REJECTED, SongRequest.PLAYED):
-        messages.error(request, "Invalid status.")
-    else:
-        song_request.status = new_status
-        song_request.save(update_fields=["status"])
-        messages.success(request, f"\"{song_request.song.title}\" marked {new_status.lower()}.")
-    return redirect("staff_dashboard")
+    try:
+        update_request_status(venue, song_request.pk, new_status)
+        messages.success(request, f"\"{song_request.song_id.title}\" marked {new_status.lower()}.")
+    except ValueError as error:
+        messages.error(request, str(error))
+    except SongRequest.DoesNotExist:
+        raise Http404('Request not found.')
+    return redirect("venue_staff_dashboard", venue_slug=venue.slug)
+
+
+@role_required([roles.STAFF, roles.OWNER])
+@require_POST
+def change_queue(request, venue_slug, entry_id):
+    venue = current_venue(request, venue_slug)
+    if not roles.can_manage_venue(request.user, venue):
+        return HttpResponseForbidden("You cannot manage this venue.")
+    entry = get_object_or_404(Queue, pk=entry_id, venue_id=venue, song_request_id__venue_id=venue)
+    action = request.POST.get('action')
+    try:
+        if action in ('up', 'down'):
+            move_queue_entry(venue, entry.pk, action)
+        elif action == 'priority':
+            try:
+                priority = int(request.POST.get('priority', ''))
+            except ValueError:
+                raise ValueError('Priority must be a number between -10 and 10.') from None
+            set_queue_priority(venue, entry.pk, priority)
+        elif action == 'remove':
+            update_request_status(venue, entry.song_request_id_id, SongRequest.REMOVED)
+        else:
+            raise ValueError('Invalid queue action.')
+    except ValueError as error:
+        messages.error(request, str(error))
+    except (Queue.DoesNotExist, SongRequest.DoesNotExist):
+        raise Http404('Queue entry not found.')
+    return redirect('venue_staff_dashboard', venue_slug=venue.slug)
 
 
 # ---------------------------------------------------------------------------
@@ -167,29 +248,42 @@ def update_request(request, request_id):
 # ---------------------------------------------------------------------------
 
 @role_required([roles.OWNER])
-def owner_dashboard(request):
+def owner_dashboard(request, venue_slug=None):
+    venue = current_venue(request, venue_slug)
+    if not venue:
+        messages.info(request, "Choose a venue to manage it.")
+        return redirect('home')
+    if not (request.user.is_superuser or venue.owner_id == request.user.pk):
+        return HttpResponseForbidden("You do not own this venue.")
     User = get_user_model()
     status_counts = dict(
-        SongRequest.objects.values_list("status").annotate(n=Count("id"))
+        SongRequest.objects.filter(venue_id=venue).values_list("status").annotate(n=Count("id"))
     )
     users = [
         {"user": u, "role": roles.get_role(u)}
-        for u in User.objects.order_by("username")
+        for u in User.objects.filter(Q(pk=venue.owner_id) | Q(staff_venues=venue)).distinct().order_by("username")
     ]
     return render(request, "core/owner_dashboard.html", {
         "status_counts": status_counts,
         "total_requests": sum(status_counts.values()),
         "users": users,
-        "assignable_roles": roles.ROLES,
+        "assignable_roles": [roles.CUSTOMER, roles.STAFF],
     })
 
 
 @role_required([roles.OWNER])
 @require_POST
-def set_user_role(request, user_id):
+def set_user_role(request, user_id, venue_slug=None):
+    venue = current_venue(request, venue_slug)
+    if not venue or not (request.user.is_superuser or venue.owner_id == request.user.pk):
+        return HttpResponseForbidden("You do not own this venue.")
     target = get_object_or_404(get_user_model(), pk=user_id)
     new_role = request.POST.get("role")
-    if new_role not in roles.ROLES:
+    if not venue.staff.filter(pk=target.pk).exists():
+        return HttpResponseForbidden("This user is not staff at this venue.")
+    if target.staff_venues.exclude(pk=venue.pk).exists() or target.owned_venues.exists():
+        return HttpResponseForbidden("This user also belongs to another venue.")
+    if new_role not in (roles.CUSTOMER, roles.STAFF):
         messages.error(request, "Invalid role.")
     elif target == request.user:
         messages.error(request, "You can't change your own role.")
@@ -198,4 +292,4 @@ def set_user_role(request, user_id):
     else:
         roles.set_role(target, new_role)
         messages.success(request, f"{target.username} is now {new_role}.")
-    return redirect("owner_dashboard")
+    return redirect("venue_owner_dashboard", venue_slug=venue.slug)

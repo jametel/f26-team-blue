@@ -21,7 +21,7 @@
             <p class="muted">See what's happening with your music.</p>
         </div>
 
-        <a href="{% url 'song_search' %}"
+        <a href="{% url 'venue_song_search' current_venue.slug %}"
            class="btn btn-primary btn-small">
             Find songs
         </a>
@@ -61,7 +61,7 @@
 
         <p>Find a song you love and request it!</p>
 
-        <a href="{% url 'song_search' %}"
+        <a href="{% url 'venue_song_search' current_venue.slug %}"
            class="btn btn-primary">
             Explore songs
         </a>
