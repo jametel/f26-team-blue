@@ -6,11 +6,15 @@ from django.db.migrations.loader import MigrationLoader
 from django.core.exceptions import ValidationError
 from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+from unittest import skipUnless
 from unittest.mock import patch
 
 from core import roles
-from core.models import (Song, SongDecision, SongFeatures, SongRequest, Venue, VenueConfig,
+from core.models import (Queue, Song, SongDecision, SongFeatures, SongRequest, Venue, VenueConfig,
                          VenueSongBlacklist, venueGenreFilter)
+from core.services.queue import move_queue_entry, set_queue_priority, update_request_status
 from core.services.song_features import FeatureData, get_song_features, refresh_song_features
 from core.services.vibe_engine import evaluate_request
 
@@ -441,6 +445,82 @@ class VibeEngineTests(TestCase):
         self.assertFalse(SongRequest.objects.filter(venue_id=other).exists())
 
 
+class QueueTests(TestCase):
+    def setUp(self):
+        self.staff = make_user('queue_staff', roles.STAFF)
+        self.venue = Venue.objects.create(name='Queue venue')
+        self.venue.staff.add(self.staff)
+        self.requests = []
+        for index in range(3):
+            song = Song.objects.create(title=f'Song {index}', artist='Artist', musicbrainz_id=f'queue-{index}')
+            self.requests.append(SongRequest.objects.create(song_id=song, venue_id=self.venue))
+
+    def test_approval_order_priority_and_staff_reordering(self):
+        for request in self.requests:
+            update_request_status(self.venue, request.pk, SongRequest.APPROVED)
+        entries = list(Queue.objects.filter(venue_id=self.venue).order_by('position'))
+        move_queue_entry(self.venue, entries[1].pk, 'up')
+        ordered = list(Queue.objects.filter(venue_id=self.venue).order_by('-priority', 'position'))
+        self.assertEqual([item.pk for item in ordered], [entries[1].pk, entries[0].pk, entries[2].pk])
+        set_queue_priority(self.venue, entries[2].pk, 1)
+        self.assertEqual(Queue.objects.filter(venue_id=self.venue).order_by('-priority', 'position').first().pk, entries[2].pk)
+
+    def test_played_and_removed_requests_leave_the_queue(self):
+        for request in self.requests[:2]:
+            update_request_status(self.venue, request.pk, SongRequest.APPROVED)
+        update_request_status(self.venue, self.requests[0].pk, SongRequest.PLAYED)
+        update_request_status(self.venue, self.requests[1].pk, SongRequest.REMOVED)
+        self.assertFalse(Queue.objects.filter(venue_id=self.venue).exists())
+        self.requests[1].refresh_from_db()
+        self.assertEqual(self.requests[1].status, SongRequest.REMOVED)
+
+    def test_rejected_decision_cannot_be_queued(self):
+        SongDecision.objects.create(
+            venue=self.venue, song=self.requests[0].song_id, request=self.requests[0],
+            outcome=SongDecision.Outcome.REJECT, reasons=['song_blacklisted'],
+        )
+        with self.assertRaises(ValueError):
+            update_request_status(self.venue, self.requests[0].pk, SongRequest.APPROVED)
+        self.assertFalse(Queue.objects.exists())
+
+    def test_staff_cannot_change_another_venue_queue(self):
+        other = Venue.objects.create(name='Other queue')
+        request = SongRequest.objects.create(song_id=self.requests[0].song_id, venue_id=other)
+        update_request_status(other, request.pk, SongRequest.APPROVED)
+        entry = Queue.objects.get(song_request_id=request)
+        self.client.login(username='queue_staff', password=PASSWORD)
+        response = self.client.post(
+            reverse('venue_change_queue', args=[self.venue.slug, entry.pk]), {'action': 'remove'},
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(Queue.objects.filter(pk=entry.pk).exists())
+
+
+@skipUnless(connection.vendor == 'postgresql', 'Queue concurrency requires PostgreSQL')
+class QueueConcurrencyTests(TransactionTestCase):
+    def test_concurrent_approvals_receive_distinct_positions(self):
+        venue = Venue.objects.create(name='Concurrent venue')
+        requests = []
+        for index in range(2):
+            song = Song.objects.create(title=f'Song {index}', artist='Artist', musicbrainz_id=f'concurrent-{index}')
+            requests.append(SongRequest.objects.create(song_id=song, venue_id=venue))
+        barrier = Barrier(2)
+
+        def approve(request_id):
+            from django.db import connections
+            try:
+                barrier.wait(timeout=10)
+                update_request_status(venue, request_id, SongRequest.APPROVED)
+            finally:
+                connections.close_all()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(approve, request.pk) for request in requests]
+            for future in futures:
+                future.result(timeout=20)
+        self.assertEqual(list(Queue.objects.filter(venue_id=venue).order_by('position').values_list('position', flat=True)), [1, 2])
+
+
 class RequestMigrationTests(TransactionTestCase):
     def migrate_to(self, target, replace_migrations=True):
         executor = MigrationExecutor(connection)
@@ -450,7 +530,7 @@ class RequestMigrationTests(TransactionTestCase):
         return executor.loader.project_state([('core', target)]).apps
 
     def tearDown(self):
-        self.migrate_to('0014_song_decision')
+        self.migrate_to('0017_queue_constraints')
         super().tearDown()
 
     def test_upgrade_from_0004_preserves_request_identity(self):
@@ -525,3 +605,15 @@ class RequestMigrationTests(TransactionTestCase):
         self.assertEqual(features.bpm, 95)
         self.assertFalse(features.is_explicit)
         self.assertEqual(features.source, 'legacy-unverified')
+
+    def test_existing_approved_requests_are_added_to_queue(self):
+        old = self.migrate_to('0014_song_decision')
+        venue = old.get_model('core', 'Venue').objects.create(name='Old queue', slug='old-queue')
+        song = old.get_model('core', 'Song').objects.create(title='Old song', artist='Artist', musicbrainz_id='old-queue-song')
+        first = old.get_model('core', 'SongRequest').objects.create(song_id=song, venue_id=venue, status='APPROVED')
+        second = old.get_model('core', 'SongRequest').objects.create(song_id=song, venue_id=venue, status='APPROVED')
+        old.get_model('core', 'Queue').objects.create(venue_id=venue, song_request_id=first)
+        current = self.migrate_to('0017_queue_constraints')
+        entries = current.get_model('core', 'Queue').objects.order_by('position')
+        self.assertEqual(list(entries.values_list('song_request_id_id', flat=True)), [first.pk, second.pk])
+        self.assertEqual(list(entries.values_list('position', flat=True)), [1, 2])

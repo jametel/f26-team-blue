@@ -41,3 +41,9 @@ providers. No BPM, mood, or explicit-content provider is configured yet.
 The Vibe Engine checks the venue's blacklist, explicit policy, genre filters,
 and BPM range when a song is requested. It records the decision and reasons.
 Unknown values follow the venue's policy, which defaults to staff review.
+
+Staff can approve requests into the venue queue, move entries within a priority,
+change priority, remove entries, and mark them played. Higher priority is listed
+first. Queue positions are protected against concurrent updates. The queue
+migration stops for duplicate, cross-venue, or non-approved legacy entries so
+they can be resolved without silently deleting data.
