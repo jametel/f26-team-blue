@@ -59,7 +59,7 @@
                         {% if song_request.status == "PENDING" %}
 
                         <form method="post"
-                              action="{% url 'update_request' song_request.id %}"
+                              action="{% url 'venue_update_request' current_venue.slug song_request.id %}"
                               class="action-form">
                             {% csrf_token %}
 
@@ -81,7 +81,7 @@
                         {% elif song_request.status == "APPROVED" %}
 
                         <form method="post"
-                              action="{% url 'update_request' song_request.id %}">
+                              action="{% url 'venue_update_request' current_venue.slug song_request.id %}">
                             {% csrf_token %}
 
                             <button type="submit"
