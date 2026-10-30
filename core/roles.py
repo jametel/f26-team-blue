@@ -25,3 +25,11 @@ def set_role(user, role):
 
     user.groups.remove(*Group.objects.filter(name__in=ROLES))
     user.groups.add(Group.objects.get(name=role))
+
+
+def can_manage_venue(user, venue):
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser or venue.owner_id == user.pk:
+        return True
+    return get_role(user) in (STAFF, OWNER) and venue.staff.filter(pk=user.pk).exists()
