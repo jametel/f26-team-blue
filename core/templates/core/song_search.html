@@ -30,6 +30,8 @@
                 </article>
             {% endfor %}
         </div>
+    {% elif search_error %}
+        <div class="empty-state"><h3>Search unavailable</h3><p>Music search is temporarily unavailable. Please try again.</p></div>
     {% else %}
         <div class="empty-state">
             {% if query %}<h3>No matches found</h3><p>Try a different song title.</p>

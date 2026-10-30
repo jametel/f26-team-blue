@@ -11,7 +11,7 @@ from django.views.decorators.http import require_POST
 from core import roles
 from core.decorators import role_required
 from core.models import Queue, Song, SongDecision, SongRequest, UserProfile, Venue
-from core.services.musicbrainz import MusicBrainzClient
+from core.services.musicbrainz import MusicBrainzClient, MusicBrainzError
 from core.services.queue import move_queue_entry, set_queue_priority, update_request_status
 from core.services.vibe_engine import evaluate_request, record_decision
 from core.venue_context import current_venue
@@ -40,6 +40,7 @@ def song_search(request, venue_slug=None):
     venue = current_venue(request, venue_slug)
     query = request.GET.get("q", "")
     results = []
+    search_error = False
     if query:
         # Issue #2 (static song search): serve from the local database first so
         # repeated searches don't hit MusicBrainz. When the library is empty for
@@ -47,8 +48,12 @@ def song_search(request, venue_slug=None):
         # static on the next search.
         local = Song.objects.filter(title__icontains=query).order_by("-id")[:10]
         if not local.exists():
-            client = MusicBrainzClient()
-            for item in client.search_songs(query):
+            try:
+                songs = MusicBrainzClient().search_songs(query)
+            except MusicBrainzError:
+                songs = []
+                search_error = True
+            for item in songs:
                 mb_id = item.get("musicbrainz_id", "")
                 if not mb_id:
                     continue
@@ -65,6 +70,7 @@ def song_search(request, venue_slug=None):
         "query": query,
         "results": results,
         "venue": venue,
+        "search_error": search_error,
     })
 
 
