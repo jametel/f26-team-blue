@@ -37,3 +37,7 @@ Song metadata is stored in `SongFeatures`. Values migrated from the old Song
 fields are marked `legacy-unverified` because their original source is unknown.
 `core.services.song_features` provides cache lookup and a refresh interface for
 providers. No BPM, mood, or explicit-content provider is configured yet.
+
+The Vibe Engine checks the venue's blacklist, explicit policy, genre filters,
+and BPM range when a song is requested. It records the decision and reasons.
+Unknown values follow the venue's policy, which defaults to staff review.

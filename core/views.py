@@ -2,15 +2,17 @@ from django.contrib import messages
 from django.contrib.auth import get_user_model, login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
-from django.db.models import Count, Q
+from django.db import transaction
+from django.db.models import Count, Prefetch, Q
 from django.http import HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from core import roles
 from core.decorators import role_required
-from core.models import Song, SongRequest, UserProfile, Venue
+from core.models import Song, SongDecision, SongRequest, UserProfile, Venue
 from core.services.musicbrainz import MusicBrainzClient
+from core.services.vibe_engine import evaluate_request, record_decision
 from core.venue_context import current_venue
 
 
@@ -140,15 +142,25 @@ def request_song(request, song_id, venue_slug=None):
             "Wait for some to be reviewed before adding more.",
         )
     else:
-        SongRequest.objects.create(
-            song_id=song,
-            venue_id=venue,
-            session_key=request.session.session_key,
-            requested_by=request.user if request.user.is_authenticated else None,
-            user_id=UserProfile.objects.get_or_create(user=request.user)[0]
-            if request.user.is_authenticated else None,
-        )
-        messages.success(request, f"Requested \"{song.title}\".")
+        decision = evaluate_request(venue, song)
+        with transaction.atomic():
+            song_request = None
+            if decision.outcome != SongDecision.Outcome.REJECT:
+                song_request = SongRequest.objects.create(
+                    song_id=song,
+                    venue_id=venue,
+                    session_key=request.session.session_key,
+                    requested_by=request.user if request.user.is_authenticated else None,
+                    user_id=UserProfile.objects.get_or_create(user=request.user)[0]
+                    if request.user.is_authenticated else None,
+                )
+            record_decision(venue, song, decision, song_request)
+        if decision.outcome == SongDecision.Outcome.REJECT:
+            messages.error(request, f"{song.title} does not meet this venue's music settings.")
+        elif decision.outcome == SongDecision.Outcome.REVIEW:
+            messages.info(request, f"{song.title} needs staff review.")
+        else:
+            messages.success(request, f"Requested \"{song.title}\".")
     return redirect("venue_customer_dashboard", venue_slug=venue.slug)
 
 
@@ -167,6 +179,8 @@ def staff_dashboard(request, venue_slug=None):
     song_requests = (
         SongRequest.objects.filter(venue_id=venue)
         .select_related("song_id", "requested_by")
+        .prefetch_related(Prefetch('decisions', queryset=SongDecision.objects.order_by('-created_at'),
+                                   to_attr='vibe_decisions'))
         .order_by("-created_at")
     )
     return render(request, "core/staff_dashboard.html", {
