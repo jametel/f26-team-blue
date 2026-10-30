@@ -1,7 +1,7 @@
 from uuid import uuid4
 
 from django.conf import settings
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils.text import slugify
@@ -10,13 +10,27 @@ class Song(models.Model):
     id = models.AutoField(primary_key=True)
     title = models.CharField(max_length=255)
     artist = models.CharField(max_length=255)
-    genre = models.CharField(max_length=100, null=True, blank=True)
-    BPM = models.IntegerField(null=True, blank=True)
-    is_explicit = models.BooleanField(null=True, blank=True)
     musicbrainz_id = models.CharField(max_length=100, unique=True)
 
     def __str__(self):
         return f"{self.title} — {self.artist}"
+
+
+class SongFeatures(models.Model):
+    song = models.OneToOneField(Song, on_delete=models.CASCADE, related_name='features')
+    genre = models.CharField(max_length=100, null=True, blank=True)
+    bpm = models.IntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
+    mood = models.CharField(max_length=100, null=True, blank=True)
+    energy = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True,
+                                 validators=[MinValueValidator(0), MaxValueValidator(1)])
+    is_explicit = models.BooleanField(null=True, blank=True)
+    source = models.CharField(max_length=100)
+    confidence = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True,
+                                     validators=[MinValueValidator(0), MaxValueValidator(1)])
+    refreshed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Features for {self.song.title}"
 
 class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
