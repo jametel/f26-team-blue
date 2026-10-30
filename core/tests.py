@@ -10,11 +10,13 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from unittest import skipUnless
 from unittest.mock import patch
+import requests
 
 from core import roles
 from core.models import (Queue, Song, SongDecision, SongFeatures, SongRequest, Venue, VenueConfig,
                          VenueSongBlacklist, venueGenreFilter)
 from core.services.queue import move_queue_entry, set_queue_priority, update_request_status
+from core.services.musicbrainz import MusicBrainzClient, MusicBrainzError
 from core.services.song_features import FeatureData, get_song_features, refresh_song_features
 from core.services.vibe_engine import evaluate_request
 
@@ -494,6 +496,85 @@ class QueueTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
         self.assertTrue(Queue.objects.filter(pk=entry.pk).exists())
+
+    def test_invalid_priority_shows_a_readable_error(self):
+        update_request_status(self.venue, self.requests[0].pk, SongRequest.APPROVED)
+        entry = Queue.objects.get(song_request_id=self.requests[0])
+        self.client.login(username='queue_staff', password=PASSWORD)
+        response = self.client.post(
+            reverse('venue_change_queue', args=[self.venue.slug, entry.pk]),
+            {'action': 'priority', 'priority': 'invalid'}, follow=True,
+        )
+        self.assertContains(response, 'Priority must be a number between -10 and 10.')
+        entry.refresh_from_db()
+        self.assertEqual(entry.priority, 0)
+
+
+class SearchReliabilityTests(TestCase):
+    @patch('core.services.musicbrainz.requests.get', side_effect=requests.Timeout())
+    def test_timeout_is_reported_as_provider_error(self, get):
+        with self.assertRaises(MusicBrainzError):
+            MusicBrainzClient().search_songs('song')
+
+    @patch('core.services.musicbrainz.requests.get')
+    def test_http_failure_is_reported_as_provider_error(self, get):
+        get.return_value.raise_for_status.side_effect = requests.HTTPError()
+        with self.assertRaises(MusicBrainzError):
+            MusicBrainzClient().search_songs('song')
+
+    @patch('core.services.musicbrainz.requests.get')
+    def test_malformed_response_is_reported_as_provider_error(self, get):
+        get.return_value.json.return_value = {'recordings': 'invalid'}
+        with self.assertRaises(MusicBrainzError):
+            MusicBrainzClient().search_songs('song')
+
+    @patch('core.views.MusicBrainzClient.search_songs', side_effect=MusicBrainzError())
+    def test_search_shows_unavailable_instead_of_no_matches(self, search):
+        response = self.client.get(reverse('song_search'), {'q': 'unavailable'})
+        self.assertContains(response, 'Search unavailable')
+        self.assertNotContains(response, 'No matches found')
+
+    @patch('core.views.MusicBrainzClient.search_songs', side_effect=MusicBrainzError())
+    def test_cached_results_are_available_without_the_provider(self, search):
+        Song.objects.create(title='Cached song', artist='Artist', musicbrainz_id='cached')
+        response = self.client.get(reverse('song_search'), {'q': 'Cached'})
+        self.assertContains(response, 'Cached song')
+        search.assert_not_called()
+
+    @patch('core.services.musicbrainz.requests.get')
+    def test_incomplete_recordings_are_skipped_safely(self, get):
+        get.return_value.json.return_value = {'recordings': [
+            None, {'id': 'valid', 'title': 'Song', 'artist-credit': None}, {'title': 'No ID'},
+        ]}
+        results = MusicBrainzClient().search_songs('song')
+        self.assertEqual(results, [{'name': 'Song', 'artist': {'name': 'Unknown Artist'}, 'musicbrainz_id': 'valid'}])
+
+
+class RequestIntegrationTests(TestCase):
+    def test_guest_request_reaches_the_staff_queue(self):
+        staff = make_user('integration_staff', roles.STAFF)
+        venue = Venue.objects.create(name='Integration venue')
+        venue.staff.add(staff)
+        VenueConfig.objects.create(venue=venue, min_bpm=80, max_bpm=120)
+        song = Song.objects.create(title='Integration song', artist='Artist', musicbrainz_id='integration')
+        SongFeatures.objects.create(song=song, source='manual', bpm=100, is_explicit=False)
+
+        self.client.get(reverse('select_venue', args=[venue.slug]))
+        search = self.client.get(reverse('venue_song_search', args=[venue.slug]), {'q': 'Integration'})
+        self.assertContains(search, 'Integration song')
+        self.client.post(reverse('venue_request_song', args=[venue.slug, song.pk]))
+        song_request = SongRequest.objects.get(venue_id=venue)
+        self.assertEqual(song_request.decisions.get().outcome, SongDecision.Outcome.ACCEPT)
+        self.assertContains(self.client.get(reverse('venue_customer_dashboard', args=[venue.slug])), 'Integration song')
+
+        staff_client = self.client_class()
+        staff_client.login(username='integration_staff', password=PASSWORD)
+        staff_client.post(reverse('venue_update_request', args=[venue.slug, song_request.pk]), {'status': 'APPROVED'})
+        self.assertTrue(Queue.objects.filter(venue_id=venue, song_request_id=song_request).exists())
+        staff_client.post(reverse('venue_update_request', args=[venue.slug, song_request.pk]), {'status': 'PLAYED'})
+        song_request.refresh_from_db()
+        self.assertEqual(song_request.status, SongRequest.PLAYED)
+        self.assertFalse(Queue.objects.filter(song_request_id=song_request).exists())
 
 
 @skipUnless(connection.vendor == 'postgresql', 'Queue concurrency requires PostgreSQL')
