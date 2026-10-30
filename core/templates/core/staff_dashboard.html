@@ -53,6 +53,12 @@
                         <span class="status-pill">
                             {{ song_request.get_status_display }}
                         </span>
+                        {% with decision=song_request.vibe_decisions.0 %}
+                            {% if decision %}
+                                <p>{{ decision.get_outcome_display }}</p>
+                                {% if decision.reasons %}<p>Reasons: {{ decision.reasons|join:", " }}</p>{% endif %}
+                            {% endif %}
+                        {% endwith %}
                     </td>
 
                     <td>

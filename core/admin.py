@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 from core.models import (
-    Song, SongFeatures, SongRequest, UserProfile, Venue, VenueConfig, VenueSongBlacklist,
+    Song, SongDecision, SongFeatures, SongRequest, UserProfile, Venue, VenueConfig, VenueSongBlacklist,
     venueGenreFilter,
 )
 
@@ -26,6 +26,17 @@ class VenueAdmin(admin.ModelAdmin):
     list_display = ("name", "slug", "owner")
     filter_horizontal = ("staff",)
     inlines = (VenueConfigInline, VenueGenreInline, VenueBlacklistInline)
+
+
+@admin.register(SongDecision)
+class SongDecisionAdmin(admin.ModelAdmin):
+    readonly_fields = ('venue', 'song', 'request', 'outcome', 'reasons', 'inputs', 'created_at')
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 admin.site.register(Song)
 admin.site.register(SongFeatures)

@@ -9,8 +9,10 @@ from django.urls import reverse
 from unittest.mock import patch
 
 from core import roles
-from core.models import Song, SongFeatures, SongRequest, Venue, VenueConfig
+from core.models import (Song, SongDecision, SongFeatures, SongRequest, Venue, VenueConfig,
+                         VenueSongBlacklist, venueGenreFilter)
 from core.services.song_features import FeatureData, get_song_features, refresh_song_features
+from core.services.vibe_engine import evaluate_request
 
 User = get_user_model()
 PASSWORD = "pw-12345"
@@ -373,6 +375,72 @@ class VenueRequestIsolationTests(TestCase):
         self.assertEqual(roles.get_role(outsider), roles.STAFF)
 
 
+class VibeEngineTests(TestCase):
+    def setUp(self):
+        self.venue = Venue.objects.create(name='Vibe venue')
+        self.config = VenueConfig.objects.create(venue=self.venue, min_bpm=80, max_bpm=120)
+        self.song = Song.objects.create(title='Vibe song', artist='Artist', musicbrainz_id='vibe-song')
+        self.features = SongFeatures.objects.create(
+            song=self.song, source='manual', genre='Jazz', bpm=80, is_explicit=False,
+        )
+        venueGenreFilter.objects.create(venue_id=self.venue, genre='Jazz', is_allowed=True)
+
+    def test_matching_song_and_bpm_boundaries_are_accepted(self):
+        self.assertEqual(evaluate_request(self.venue, self.song).outcome, 'ACCEPT')
+        self.features.bpm = 120
+        self.features.save()
+        self.assertEqual(evaluate_request(self.venue, self.song).outcome, 'ACCEPT')
+
+    def test_blacklist_genre_explicit_and_bpm_rules_reject(self):
+        VenueSongBlacklist.objects.create(venue_id=self.venue, song_id=self.song)
+        self.features.genre = 'Rock'
+        self.features.bpm = 121
+        self.features.is_explicit = True
+        self.features.save()
+        result = evaluate_request(self.venue, self.song)
+        self.assertEqual(result.outcome, 'REJECT')
+        self.assertEqual(set(result.reasons), {
+            'song_blacklisted', 'genre_not_allowed', 'bpm_out_of_range', 'explicit_content',
+        })
+
+    def test_unknown_values_follow_each_venue_policy(self):
+        self.features.is_explicit = None
+        self.features.genre = None
+        self.features.bpm = None
+        self.features.save()
+        self.assertEqual(evaluate_request(self.venue, self.song).outcome, 'REVIEW')
+        self.config.unknown_policy = VenueConfig.UnknownPolicy.ACCEPT
+        self.config.save()
+        self.assertEqual(evaluate_request(self.venue, self.song).outcome, 'ACCEPT')
+        self.config.unknown_policy = VenueConfig.UnknownPolicy.REJECT
+        self.config.save()
+        result = evaluate_request(self.venue, self.song)
+        self.assertEqual(result.outcome, 'REJECT')
+        self.assertEqual(set(result.reasons), {'explicit_unknown', 'genre_unknown', 'bpm_unknown'})
+
+    def test_legacy_features_are_not_treated_as_verified(self):
+        self.features.source = 'legacy-unverified'
+        self.features.save()
+        self.assertEqual(evaluate_request(self.venue, self.song).outcome, 'REVIEW')
+
+    def test_request_records_review_or_rejection(self):
+        self.features.is_explicit = None
+        self.features.save()
+        url = reverse('venue_request_song', args=[self.venue.slug, self.song.pk])
+        self.client.post(url)
+        decision = SongDecision.objects.get()
+        self.assertEqual(decision.outcome, 'REVIEW')
+        self.assertIsNotNone(decision.request)
+        self.assertIn('explicit_unknown', decision.reasons)
+        other = Venue.objects.create(name='Other venue')
+        VenueSongBlacklist.objects.create(venue_id=other, song_id=self.song)
+        self.client.post(reverse('venue_request_song', args=[other.slug, self.song.pk]))
+        rejected = SongDecision.objects.get(venue=other)
+        self.assertEqual(rejected.outcome, 'REJECT')
+        self.assertIsNone(rejected.request)
+        self.assertFalse(SongRequest.objects.filter(venue_id=other).exists())
+
+
 class RequestMigrationTests(TransactionTestCase):
     def migrate_to(self, target, replace_migrations=True):
         executor = MigrationExecutor(connection)
@@ -382,7 +450,7 @@ class RequestMigrationTests(TransactionTestCase):
         return executor.loader.project_state([('core', target)]).apps
 
     def tearDown(self):
-        self.migrate_to('0013_remove_song_metadata')
+        self.migrate_to('0014_song_decision')
         super().tearDown()
 
     def test_upgrade_from_0004_preserves_request_identity(self):
