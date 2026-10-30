@@ -8,7 +8,7 @@ from django.views.decorators.http import require_POST
 
 from core import roles
 from core.decorators import role_required
-from core.models import Song, SongRequest
+from core.models import Song, SongRequest, UserProfile
 from core.services.musicbrainz import MusicBrainzClient
 
 
@@ -102,7 +102,7 @@ def _patron_requests(request):
 
 def customer_dashboard(request):
     my_requests = (
-        _patron_requests(request).select_related("song").order_by("-requested_at")
+        _patron_requests(request).select_related("song_id").order_by("-created_at")
     )
     return render(request, "core/customer_dashboard.html", {"requests": my_requests})
 
@@ -114,7 +114,7 @@ def request_song(request, song_id):
         request.session.create()
 
     mine = _patron_requests(request)
-    if mine.filter(song=song, status=SongRequest.PENDING).exists():
+    if mine.filter(song_id=song, status=SongRequest.PENDING).exists():
         messages.info(request, f"You already have a pending request for \"{song.title}\".")
     elif mine.filter(status=SongRequest.PENDING).count() >= MAX_PENDING_PER_PATRON:
         messages.error(
@@ -124,9 +124,11 @@ def request_song(request, song_id):
         )
     else:
         SongRequest.objects.create(
-            song=song,
+            song_id=song,
             session_key=request.session.session_key,
             requested_by=request.user if request.user.is_authenticated else None,
+            user_id=UserProfile.objects.get_or_create(user=request.user)[0]
+            if request.user.is_authenticated else None,
         )
         messages.success(request, f"Requested \"{song.title}\".")
     return redirect("customer_dashboard")
@@ -140,8 +142,8 @@ def request_song(request, song_id):
 def staff_dashboard(request):
     song_requests = (
         SongRequest.objects
-        .select_related("song", "requested_by")
-        .order_by("-requested_at")
+        .select_related("song_id", "requested_by")
+        .order_by("-created_at")
     )
     return render(request, "core/staff_dashboard.html", {
         "song_requests": song_requests,
@@ -153,12 +155,16 @@ def staff_dashboard(request):
 def update_request(request, request_id):
     song_request = get_object_or_404(SongRequest, pk=request_id)
     new_status = request.POST.get("status")
-    if new_status not in (SongRequest.APPROVED, SongRequest.REJECTED, SongRequest.PLAYED):
+    transitions = {
+        SongRequest.PENDING: {SongRequest.APPROVED, SongRequest.REJECTED},
+        SongRequest.APPROVED: {SongRequest.PLAYED},
+    }
+    if new_status not in transitions.get(song_request.status, set()):
         messages.error(request, "Invalid status.")
     else:
         song_request.status = new_status
         song_request.save(update_fields=["status"])
-        messages.success(request, f"\"{song_request.song.title}\" marked {new_status.lower()}.")
+        messages.success(request, f"\"{song_request.song_id.title}\" marked {new_status.lower()}.")
     return redirect("staff_dashboard")
 
 

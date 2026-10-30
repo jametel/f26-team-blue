@@ -1,7 +1,11 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
-from django.test import TestCase
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
+from django.db.migrations.loader import MigrationLoader
+from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
+from unittest.mock import patch
 
 from core import roles
 from core.models import Song, SongRequest
@@ -158,7 +162,7 @@ class RequestFlowTests(TestCase):
         self.assertEqual(SongRequest.objects.get().requested_by, self.customer)
 
     def test_staff_can_update_status_customer_cannot(self):
-        req = SongRequest.objects.create(song=self.song, requested_by=self.customer)
+        req = SongRequest.objects.create(song_id=self.song, requested_by=self.customer)
         url = reverse("update_request", args=[req.id])
 
         self.client.login(username="cust", password=PASSWORD)
@@ -168,13 +172,31 @@ class RequestFlowTests(TestCase):
 
         self.client.logout()
         self.client.login(username="staffer", password=PASSWORD)
-        self.client.post(url, {"status": "Approved"})
+        self.client.post(url, {"status": "APPROVED"})
         req.refresh_from_db()
         self.assertEqual(req.status, SongRequest.APPROVED)
 
         self.client.post(url, {"status": "Bogus"})
         req.refresh_from_db()
         self.assertEqual(req.status, SongRequest.APPROVED)
+
+    def test_staff_cannot_mark_pending_request_played(self):
+        req = SongRequest.objects.create(song_id=self.song)
+        self.client.login(username="staffer", password=PASSWORD)
+        self.client.post(reverse("update_request", args=[req.id]), {"status": "PLAYED"})
+        req.refresh_from_db()
+        self.assertEqual(req.status, SongRequest.PENDING)
+
+    @patch("core.views.MusicBrainzClient.search_songs")
+    def test_search_can_save_song_with_unknown_features(self, search):
+        search.return_value = [{
+            "name": "New song", "artist": {"name": "Artist"}, "musicbrainz_id": "new-id",
+        }]
+        response = self.client.get(reverse("song_search"), {"q": "New song"})
+        self.assertContains(response, "New song")
+        song = Song.objects.get(musicbrainz_id="new-id")
+        self.assertIsNone(song.BPM)
+        self.assertIsNone(song.is_explicit)
 
 
 class OwnerRoleManagementTests(TestCase):
@@ -203,3 +225,64 @@ class OwnerRoleManagementTests(TestCase):
         self.client.login(username="boss", password=PASSWORD)
         self.client.post(reverse("set_user_role", args=[self.target.id]), {"role": "Admin"})
         self.assertEqual(roles.get_role(self.target), roles.CUSTOMER)
+
+
+class RequestMigrationTests(TransactionTestCase):
+    def migrate_to(self, target, replace_migrations=True):
+        executor = MigrationExecutor(connection)
+        if not replace_migrations:
+            executor.loader = MigrationLoader(connection, replace_migrations=False)
+        executor.migrate([('core', target)])
+        return executor.loader.project_state([('core', target)]).apps
+
+    def tearDown(self):
+        self.migrate_to('0007_restore_request_identity')
+        super().tearDown()
+
+    def test_upgrade_from_0004_preserves_request_identity(self):
+        old = self.migrate_to('0004_songrequest_session_key')
+        user = old.get_model('auth', 'User').objects.create(username='legacy')
+        song = old.get_model('core', 'Song').objects.create(
+            title='Old song', artist='Artist', musicbrainz_id='legacy-song'
+        )
+        request = old.get_model('core', 'SongRequest').objects.create(
+            song=song, requested_by=user, session_key='legacy-session', status='Approved'
+        )
+        guest = old.get_model('core', 'SongRequest').objects.create(
+            song=song, session_key='guest-session', status='Pending'
+        )
+        created_at = request.requested_at
+
+        current = self.migrate_to('0007_restore_request_identity')
+        restored = current.get_model('core', 'SongRequest').objects.get(pk=request.pk)
+        restored_song = current.get_model('core', 'Song').objects.get(pk=song.pk)
+        self.assertEqual(restored.requested_by_id, user.pk)
+        self.assertEqual(restored.session_key, 'legacy-session')
+        self.assertEqual(restored.status, 'APPROVED')
+        self.assertEqual(restored.created_at, created_at)
+        self.assertIsNone(restored.venue_id_id)
+        self.assertIsNone(restored_song.BPM)
+        self.assertIsNone(restored_song.is_explicit)
+        restored_guest = current.get_model('core', 'SongRequest').objects.get(pk=guest.pk)
+        self.assertIsNone(restored_guest.requested_by_id)
+        self.assertEqual(restored_guest.session_key, 'guest-session')
+        self.assertEqual(restored_guest.status, 'PENDING')
+
+    def test_existing_original_0005_upgrades_without_replaying_it(self):
+        self.migrate_to('0004_songrequest_session_key')
+        old = self.migrate_to('0005_userprofile_venue_and_more', replace_migrations=False)
+        user = old.get_model('auth', 'User').objects.create(username='existing')
+        profile = old.get_model('core', 'UserProfile').objects.create(user_id=user.pk)
+        venue = old.get_model('core', 'Venue').objects.create(name='Existing venue')
+        song = old.get_model('core', 'Song').objects.create(
+            title='Existing', artist='Artist', musicbrainz_id='existing-song', genre='Jazz', BPM=90
+        )
+        request = old.get_model('core', 'SongRequest').objects.create(
+            song_id=song, user_id=profile, venue_id=venue, status='PENDING'
+        )
+
+        current = self.migrate_to('0007_restore_request_identity')
+        restored = current.get_model('core', 'SongRequest').objects.get(pk=request.pk)
+        self.assertEqual(restored.venue_id_id, venue.pk)
+        self.assertEqual(restored.user_id_id, profile.pk)
+        self.assertIsNone(restored.requested_by_id)
