@@ -1,4 +1,4 @@
-# Fall 2026 - Team Blue - VibeQueue
+# Fall 2026 - Team Blue - RhythmiQ
 
 # Members
 

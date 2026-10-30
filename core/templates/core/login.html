@@ -1,1 +1,12 @@
-{% extends "core/base.html" %}{% block title %}Log in — Rythmiq{% endblock %}{% block content %}<section class="auth-wrap"><div class="panel auth-card"><p class="eyebrow">WELCOME BACK</p><h1>Log in</h1><p class="muted">Access your Rythmiq account.</p><form method="post" class="auth-form">{% csrf_token %}{{ form.as_p }}{% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}<button type="submit" class="btn btn-primary full-width">Log in</button></form><p class="muted">New here? <a class="muted-link" href="{% url 'register' %}">Create an account</a></p></div></section>{% endblock %}
+{% extends "core/base.html" %}{% block title %}Log in — RhythmiQ{% endblock %}{% block content %}<section
+    class="auth-wrap">
+    <div class="panel auth-card">
+        <p class="eyebrow">WELCOME BACK</p>
+        <h1>Log in</h1>
+        <p class="muted">Access your RhythmiQ account.</p>
+        <form method="post" class="auth-form">{% csrf_token %}{{ form.as_p }}{% if next %}<input type="hidden"
+                name="next" value="{{ next }}">{% endif %}<button type="submit" class="btn btn-primary full-width">Log
+                in</button></form>
+        <p class="muted">New here? <a class="muted-link" href="{% url 'register' %}">Create an account</a></p>
+    </div>
+</section>{% endblock %}

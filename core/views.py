@@ -69,7 +69,7 @@ def register(request):
         user = form.save()
         roles.set_role(user, roles.CUSTOMER)
         login(request, user)
-        messages.success(request, "Welcome to Rhythmiq! Your account has been created.")
+        messages.success(request, "Welcome to RhythmiQ! Your account has been created.")
         return redirect("dashboard")
     return render(request, "core/register.html", {"form": form})
 
