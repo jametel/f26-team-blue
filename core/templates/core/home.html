@@ -1,6 +1,15 @@
 {% extends "core/base.html" %}
-
+{% block title %}Rythmiq — Your Vibes Managed{% endblock %}
 {% block content %}
-    <h2>Welcome to Rhythmiq</h2>
-    <p>Your Vibes Managed</p>
+<section class="hero">
+  <div class="hero-copy">
+    <p class="eyebrow"><span class="live-dot"></span> THE SOUND OF A BETTER NIGHT</p>
+    <h1>Good music.<br><span class="gradient-text">Great vibes.</span></h1>
+    <p class="hero-subtitle">Discover the songs you love and help set the mood. Rythmiq brings music discovery and venue requests into one simple experience.</p>
+    <div class="hero-actions"><a class="btn btn-primary" href="{% url 'song_search' %}">Explore songs <span aria-hidden="true">↗</span></a><a class="btn btn-secondary" href="#how-it-works">How it works <span aria-hidden="true">↓</span></a></div>
+    <div class="hero-note"><span class="hero-note-dot"></span> Explore tracks and find your next favorite sound</div>
+  </div>
+  <div class="hero-art" aria-hidden="true"><div class="glow"></div><div class="record record-back"></div><div class="record record-main"><div class="record-label"><span>R</span></div></div><div class="equalizer"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="floating-tag top-tag">♪ MUSIC FOR THE MOMENT</span><span class="floating-tag bottom-tag">TURN UP THE VIBE ↗</span></div>
+</section>
+<section class="features" id="how-it-works"><div class="section-title"><p class="eyebrow">A BETTER MUSIC EXPERIENCE</p><h2>Your night. Your soundtrack.</h2><p>Music discovery made refreshingly simple.</p></div><div class="feature-grid"><article class="feature-card"><span class="feature-icon">⌕</span><h3>Find your sound</h3><p>Look up songs and artists with an easy-to-use search.</p></article><article class="feature-card"><span class="feature-icon">♫</span><h3>Explore music</h3><p>Browse track results and discover what fits the mood.</p></article><article class="feature-card"><span class="feature-icon">▥</span><h3>Venue-ready tools</h3><p>Dedicated staff and owner views support the future request experience.</p></article></div></section>
 {% endblock %}

@@ -1,0 +1,74 @@
+
+{% extends "core/base.html" %}
+
+{% block title %}My Requests - Rythmiq{% endblock %}
+
+{% block content %}
+
+<section class="page-heading">
+    <p class="eyebrow">YOUR MUSIC, YOUR VIBE</p>
+
+    <h1>My <span class="gradient-text">Requests.</span></h1>
+
+    <p>Keep track of your requested songs and their status.</p>
+</section>
+
+<section class="panel dashboard-panel">
+
+    <div class="panel-heading">
+        <div>
+            <h2>My Song Requests</h2>
+            <p class="muted">See what's happening with your music.</p>
+        </div>
+
+        <a href="{% url 'song_search' %}"
+           class="btn btn-primary btn-small">
+            Find songs
+        </a>
+    </div>
+
+    {% if requests %}
+
+    <div class="song-list">
+
+        {% for r in requests %}
+
+        <div class="song-item">
+
+            <div class="song-icon">♫</div>
+
+            <div class="song-info">
+                <h3>{{ r.song_id.title }}</h3>
+                <p>{{ r.song_id.artist }}</p>
+            </div>
+
+            <span class="status-pill">
+                {{ r.get_status_display }}
+            </span>
+
+        </div>
+
+        {% endfor %}
+
+    </div>
+
+    {% else %}
+
+    <div class="empty-state">
+        <div class="empty-icon">♫</div>
+
+        <h3>No song requests yet</h3>
+
+        <p>Find a song you love and request it!</p>
+
+        <a href="{% url 'song_search' %}"
+           class="btn btn-primary">
+            Explore songs
+        </a>
+    </div>
+
+    {% endif %}
+
+</section>
+
+{% endblock %}

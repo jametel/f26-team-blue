@@ -1,0 +1,34 @@
+services:
+  web:
+    build: .
+    command: >
+      sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+
+    # WEB_PORT is read from .env (git-ignored, per-machine). Defaults to 8000
+    # so the standard port works for everyone; set WEB_PORT in your local .env
+    # if 8000 is taken on your machine.
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    # Inside Docker, the Postgres service is reachable by its compose name "db",
+    # not "localhost". This overrides DB_HOST from .env so the web container
+    # connects to the db service. (Local direct runs keep using localhost.)
+    environment:
+      DB_HOST: db
+    depends_on:
+      - db
+
+  db:
+    image: postgres:18.6
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+
+volumes:
+  postgres_data:

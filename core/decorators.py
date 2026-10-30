@@ -2,10 +2,15 @@ from functools import wraps
 from django.shortcuts import redirect
 from django.http import HttpResponseForbidden
 
+from core.roles import get_role
+
 
 def role_required(allowed_roles):
     """
-    Restricts a page to users who belong to one of the allowed Django Groups.
+    Restricts a page to users whose role is one of the allowed roles.
+
+    A user's role is the highest of Owner > Staff > Customer (superusers count
+    as Owner), so Owner is always allowed wherever Staff is.
 
     Example:
         @role_required(["Staff", "Owner"])
@@ -20,12 +25,9 @@ def role_required(allowed_roles):
 
             # User must be logged in
             if not request.user.is_authenticated:
-                return redirect("login")
+                return redirect(f"{redirect_login_url()}?next={request.path}")
 
-            # Check whether the user belongs to an allowed group
-            user_roles = request.user.groups.values_list("name", flat=True)
-
-            if not any(role in allowed_roles for role in user_roles):
+            if get_role(request.user) not in allowed_roles:
                 return HttpResponseForbidden(
                     "You do not have permission to access this page."
                 )
@@ -35,3 +37,8 @@ def role_required(allowed_roles):
         return wrapper
 
     return decorator
+
+
+def redirect_login_url():
+    from django.urls import reverse
+    return reverse("login")
