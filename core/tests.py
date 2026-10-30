@@ -538,6 +538,33 @@ class SearchReliabilityTests(TestCase):
         self.assertEqual(results, [{'name': 'Song', 'artist': {'name': 'Unknown Artist'}, 'musicbrainz_id': 'valid'}])
 
 
+class RequestIntegrationTests(TestCase):
+    def test_guest_request_reaches_the_staff_queue(self):
+        staff = make_user('integration_staff', roles.STAFF)
+        venue = Venue.objects.create(name='Integration venue')
+        venue.staff.add(staff)
+        VenueConfig.objects.create(venue=venue, min_bpm=80, max_bpm=120)
+        song = Song.objects.create(title='Integration song', artist='Artist', musicbrainz_id='integration')
+        SongFeatures.objects.create(song=song, source='manual', bpm=100, is_explicit=False)
+
+        self.client.get(reverse('select_venue', args=[venue.slug]))
+        search = self.client.get(reverse('venue_song_search', args=[venue.slug]), {'q': 'Integration'})
+        self.assertContains(search, 'Integration song')
+        self.client.post(reverse('venue_request_song', args=[venue.slug, song.pk]))
+        song_request = SongRequest.objects.get(venue_id=venue)
+        self.assertEqual(song_request.decisions.get().outcome, SongDecision.Outcome.ACCEPT)
+        self.assertContains(self.client.get(reverse('venue_customer_dashboard', args=[venue.slug])), 'Integration song')
+
+        staff_client = self.client_class()
+        staff_client.login(username='integration_staff', password=PASSWORD)
+        staff_client.post(reverse('venue_update_request', args=[venue.slug, song_request.pk]), {'status': 'APPROVED'})
+        self.assertTrue(Queue.objects.filter(venue_id=venue, song_request_id=song_request).exists())
+        staff_client.post(reverse('venue_update_request', args=[venue.slug, song_request.pk]), {'status': 'PLAYED'})
+        song_request.refresh_from_db()
+        self.assertEqual(song_request.status, SongRequest.PLAYED)
+        self.assertFalse(Queue.objects.filter(song_request_id=song_request).exists())
+
+
 @skipUnless(connection.vendor == 'postgresql', 'Queue concurrency requires PostgreSQL')
 class QueueConcurrencyTests(TransactionTestCase):
     def test_concurrent_approvals_receive_distinct_positions(self):
