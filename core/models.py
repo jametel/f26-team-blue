@@ -123,6 +123,25 @@ class SongRequest(models.Model):
     def __str__(self):
         return f"{self.user_id} — {self.song_id} — {self.status}"
 
+
+class SongDecision(models.Model):
+    class Outcome(models.TextChoices):
+        ACCEPT = 'ACCEPT', 'Accepted'
+        REJECT = 'REJECT', 'Rejected'
+        REVIEW = 'REVIEW', 'Staff review'
+
+    venue = models.ForeignKey(Venue, on_delete=models.PROTECT, related_name='decisions')
+    song = models.ForeignKey(Song, on_delete=models.PROTECT, related_name='decisions')
+    request = models.ForeignKey(SongRequest, on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name='decisions')
+    outcome = models.CharField(max_length=10, choices=Outcome.choices)
+    reasons = models.JSONField(default=list)
+    inputs = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.song.title}: {self.get_outcome_display()}"
+
 class venueGenreFilter(models.Model):
     id = models.AutoField(primary_key=True)
     venue_id = models.ForeignKey(Venue, on_delete=models.CASCADE)
