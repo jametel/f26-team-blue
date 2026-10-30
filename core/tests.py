@@ -10,11 +10,13 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from unittest import skipUnless
 from unittest.mock import patch
+import requests
 
 from core import roles
 from core.models import (Queue, Song, SongDecision, SongFeatures, SongRequest, Venue, VenueConfig,
                          VenueSongBlacklist, venueGenreFilter)
 from core.services.queue import move_queue_entry, set_queue_priority, update_request_status
+from core.services.musicbrainz import MusicBrainzClient, MusicBrainzError
 from core.services.song_features import FeatureData, get_song_features, refresh_song_features
 from core.services.vibe_engine import evaluate_request
 
@@ -494,6 +496,46 @@ class QueueTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
         self.assertTrue(Queue.objects.filter(pk=entry.pk).exists())
+
+
+class SearchReliabilityTests(TestCase):
+    @patch('core.services.musicbrainz.requests.get', side_effect=requests.Timeout())
+    def test_timeout_is_reported_as_provider_error(self, get):
+        with self.assertRaises(MusicBrainzError):
+            MusicBrainzClient().search_songs('song')
+
+    @patch('core.services.musicbrainz.requests.get')
+    def test_http_failure_is_reported_as_provider_error(self, get):
+        get.return_value.raise_for_status.side_effect = requests.HTTPError()
+        with self.assertRaises(MusicBrainzError):
+            MusicBrainzClient().search_songs('song')
+
+    @patch('core.services.musicbrainz.requests.get')
+    def test_malformed_response_is_reported_as_provider_error(self, get):
+        get.return_value.json.return_value = {'recordings': 'invalid'}
+        with self.assertRaises(MusicBrainzError):
+            MusicBrainzClient().search_songs('song')
+
+    @patch('core.views.MusicBrainzClient.search_songs', side_effect=MusicBrainzError())
+    def test_search_shows_unavailable_instead_of_no_matches(self, search):
+        response = self.client.get(reverse('song_search'), {'q': 'unavailable'})
+        self.assertContains(response, 'Search unavailable')
+        self.assertNotContains(response, 'No matches found')
+
+    @patch('core.views.MusicBrainzClient.search_songs', side_effect=MusicBrainzError())
+    def test_cached_results_are_available_without_the_provider(self, search):
+        Song.objects.create(title='Cached song', artist='Artist', musicbrainz_id='cached')
+        response = self.client.get(reverse('song_search'), {'q': 'Cached'})
+        self.assertContains(response, 'Cached song')
+        search.assert_not_called()
+
+    @patch('core.services.musicbrainz.requests.get')
+    def test_incomplete_recordings_are_skipped_safely(self, get):
+        get.return_value.json.return_value = {'recordings': [
+            None, {'id': 'valid', 'title': 'Song', 'artist-credit': None}, {'title': 'No ID'},
+        ]}
+        results = MusicBrainzClient().search_songs('song')
+        self.assertEqual(results, [{'name': 'Song', 'artist': {'name': 'Unknown Artist'}, 'musicbrainz_id': 'valid'}])
 
 
 @skipUnless(connection.vendor == 'postgresql', 'Queue concurrency requires PostgreSQL')
