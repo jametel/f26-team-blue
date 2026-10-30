@@ -1,10 +1,22 @@
-<head>
+    {% load static %}
+    <head>
     <title>{% block title %}Rhythmiq{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'core/site.css' %}">
 </head>
 <body>
-    <h1>Rhythmiq</h1>
 
-    <nav>
+<header class="site-header">
+    <div class="container nav-inner">
+
+<a class="brand" href="{% url 'home' %}">
+    <img src="{% static 'core/rythmiq-logo.png' %}" alt="Rythmiq Logo">
+    <span>Rythmiq</span>
+</a>
+
+
+
+<nav class="site-nav">
+
         <a href="{% url 'home' %}">Home</a>
         <a href="{% url 'song_search' %}">Search</a>
         <a href="{% url 'customer_dashboard' %}">My Requests</a>
@@ -28,6 +40,10 @@
         {% endif %}
     </nav>
 
+    </div>
+</header>
+<div class="container">
+
     {% if messages %}
         <ul class="messages">
             {% for message in messages %}
@@ -39,4 +55,7 @@
     <main>
         {% block content %}{% endblock %}
     </main>
+
+</div>
+
 </body>

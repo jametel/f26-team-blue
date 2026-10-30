@@ -1,46 +1,147 @@
+
 {% extends "core/base.html" %}
 
-{% block title %}Owner Dashboard — Rhythmiq{% endblock %}
+{% block title %}Owner Dashboard - Rythmiq{% endblock %}
 
 {% block content %}
 
-<h2>Owner Dashboard</h2>
+<section class="page-heading">
+    <p class="eyebrow">VENUE CONTROL CENTER</p>
 
-<h3>Requests Overview</h3>
-<p>
-    Total: {{ total_requests }} —
-    Pending: {{ status_counts.Pending|default:0 }},
-    Approved: {{ status_counts.Approved|default:0 }},
-    Played: {{ status_counts.Played|default:0 }},
-    Rejected: {{ status_counts.Rejected|default:0 }}
-</p>
-<p><a href="{% url 'staff_dashboard' %}">Open the staff request queue</a></p>
+    <h1>Owner <span class="gradient-text">Dashboard.</span></h1>
 
-<h3>Users and Roles</h3>
-<table>
-    <tr><th>User</th><th>Role</th><th>Change role</th></tr>
-    {% for entry in users %}
-    <tr>
-        <td>{{ entry.user.username }}</td>
-        <td>{{ entry.role|default:"None" }}</td>
-        <td>
-            {% if entry.user != request.user and not entry.user.is_superuser %}
-            <form method="post" action="{% url 'set_user_role' entry.user.id %}">
-                {% csrf_token %}
-                <select name="role">
-                    {% for r in assignable_roles %}
-                    <option value="{{ r }}"{% if r == entry.role %} selected{% endif %}>{{ r }}</option>
+    <p>Manage your venue, monitor requests, and oversee your team.</p>
+</section>
+
+<section class="owner-grid">
+
+    <div class="panel">
+        <div class="panel-heading">
+            <div>
+                <h2>Requests Overview</h2>
+                <p class="muted">A snapshot of your music requests.</p>
+            </div>
+        </div>
+
+        <div class="dashboard-metrics">
+
+            <div class="metric">
+                <strong>{{ total_requests }}</strong>
+                <span>Total Requests</span>
+            </div>
+
+            <div class="metric">
+                <strong>{{ status_counts.PENDING|default:0 }}</strong>
+                <span>Pending</span>
+            </div>
+
+            <div class="metric">
+                <strong>{{ status_counts.APPROVED|default:0 }}</strong>
+                <span>Approved</span>
+            </div>
+
+            <div class="metric">
+                <strong>{{ status_counts.PLAYED|default:0 }}</strong>
+                <span>Played</span>
+            </div>
+
+            <div class="metric">
+                <strong>{{ status_counts.REJECTED|default:0 }}</strong>
+                <span>Rejected</span>
+            </div>
+
+        </div>
+
+        <a href="{% url 'staff_dashboard' %}"
+           class="btn btn-primary btn-small">
+            Open Staff Queue
+        </a>
+    </div>
+
+    <div class="panel dashboard-panel">
+
+        <div class="panel-heading">
+            <div>
+                <h2>Users & Roles</h2>
+                <p class="muted">
+                    Manage team permissions and access.
+                </p>
+            </div>
+        </div>
+
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Current Role</th>
+                        <th>Change Role</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {% for entry in users %}
+                    <tr>
+                        <td class="bold-cell">
+                            {{ entry.user.username }}
+                        </td>
+
+                        <td>
+                            <span class="status-pill">
+                                {{ entry.role|default:"None" }}
+                            </span>
+                        </td>
+
+                        <td>
+                            {% if entry.user != request.user and not entry.user.is_superuser %}
+
+                            <form method="post"
+                                  action="{% url 'set_user_role' entry.user.id %}"
+                                  class="action-form">
+                                {% csrf_token %}
+
+                                <select name="role" class="role-select">
+                                    {% for r in assignable_roles %}
+                                    <option value="{{ r }}"
+                                        {% if r == entry.role %}selected{% endif %}>
+                                        {{ r }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+
+                                <button type="submit"
+                                        class="btn btn-primary btn-small">
+                                    Save
+                                </button>
+                            </form>
+
+                            {% else %}
+                            <span class="muted">No changes available</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="3" class="muted">
+                            No users found.
+                        </td>
+                    </tr>
                     {% endfor %}
-                </select>
-                <button type="submit">Save</button>
-            </form>
-            {% endif %}
-        </td>
-    </tr>
-    {% endfor %}
-</table>
+                </tbody>
+            </table>
+        </div>
 
-<h3>Venue and Vibe Management</h3>
-<p>These features will be added in a future sprint.</p>
+    </div>
+
+    <div class="panel dashboard-panel">
+        <h2>Venue & Vibe Management</h2>
+
+        <p class="muted">
+            Venue settings, music preferences, and vibe controls
+            are planned for a future sprint.
+        </p>
+    </div>
+
+</section>
 
 {% endblock %}
