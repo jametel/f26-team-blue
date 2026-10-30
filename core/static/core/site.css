@@ -146,8 +146,7 @@ form {  /* override user agent stylesheet */
     text-transform: uppercase
 }
 
-.live-dot,
-.hero-note-dot {
+.live-dot {
     display: inline-block;
     width: 8px;
     height: 8px;
