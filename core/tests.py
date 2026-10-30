@@ -21,6 +21,12 @@ def make_user(username, role=None):
     return user
 
 
+def choose_venue(client, venue):
+    session = client.session
+    session['venue_slug'] = venue.slug
+    session.save()
+
+
 class RoleGroupTests(TestCase):
     def test_groups_exist_after_migrations(self):
         names = set(Group.objects.filter(name__in=roles.ROLES).values_list("name", flat=True))
@@ -49,6 +55,7 @@ class AuthTests(TestCase):
         self.assertEqual(int(self.client.session["_auth_user_id"]), user.pk)
 
     def test_login_redirects_to_role_dashboard(self):
+        venue = Venue.objects.create(name='Login venue')
         cases = {
             roles.CUSTOMER: "customer_dashboard",
             roles.STAFF: "staff_dashboard",
@@ -56,7 +63,13 @@ class AuthTests(TestCase):
         }
         for role, target in cases.items():
             with self.subTest(role=role):
-                make_user(f"u_{role}", role)
+                user = make_user(f"u_{role}", role)
+                if role == roles.OWNER:
+                    venue.owner = user
+                    venue.save()
+                elif role == roles.STAFF:
+                    venue.staff.add(user)
+                choose_venue(self.client, venue)
                 resp = self.client.post(
                     reverse("login"),
                     {"username": f"u_{role}", "password": PASSWORD},
@@ -89,6 +102,7 @@ class AccessControlTests(TestCase):
             self.assertIn(reverse("login"), resp["Location"])
 
     def test_role_matrix(self):
+        venue = Venue.objects.create(name='Role venue')
         allowed = {
             roles.CUSTOMER: {"customer_dashboard"},
             roles.STAFF: {"customer_dashboard", "staff_dashboard"},
@@ -97,8 +111,14 @@ class AccessControlTests(TestCase):
         pages = ["customer_dashboard", "staff_dashboard", "owner_dashboard"]
         for role, ok in allowed.items():
             self.client.logout()
-            make_user(f"m_{role}", role)
+            user = make_user(f"m_{role}", role)
+            if role == roles.OWNER:
+                venue.owner = user
+                venue.save()
+            elif role == roles.STAFF:
+                venue.staff.add(user)
             self.client.login(username=f"m_{role}", password=PASSWORD)
+            choose_venue(self.client, venue)
             for page in pages:
                 with self.subTest(role=role, page=page):
                     status = self.client.get(reverse(page)).status_code
@@ -112,6 +132,7 @@ class AccessControlTests(TestCase):
     def test_menu_shows_only_permitted_links(self):
         make_user("menu_c", roles.CUSTOMER)
         self.client.login(username="menu_c", password=PASSWORD)
+        choose_venue(self.client, Venue.objects.create(name='Menu venue'))
         html = self.client.get(reverse("customer_dashboard")).content.decode()
         self.assertIn("My Requests", html)
         self.assertNotIn(reverse("staff_dashboard"), html)
@@ -123,11 +144,14 @@ class RequestFlowTests(TestCase):
         self.song = Song.objects.create(title="Song A", artist="Artist", musicbrainz_id="mb-1")
         self.customer = make_user("cust", roles.CUSTOMER)
         self.staff = make_user("staffer", roles.STAFF)
+        self.venue = Venue.objects.create(name='Request venue')
+        self.venue.staff.add(self.staff)
+        choose_venue(self.client, self.venue)
 
     def test_guest_can_request_without_login(self):
         url = reverse("request_song", args=[self.song.id])
         resp = self.client.post(url)
-        self.assertRedirects(resp, reverse("customer_dashboard"), fetch_redirect_response=False)
+        self.assertRedirects(resp, reverse("venue_customer_dashboard", args=[self.venue.slug]), fetch_redirect_response=False)
         req = SongRequest.objects.get()
         self.assertIsNone(req.requested_by)
         self.assertTrue(req.session_key)
@@ -150,7 +174,7 @@ class RequestFlowTests(TestCase):
     def test_sessions_do_not_see_each_others_requests(self):
         self.client.post(reverse("request_song", args=[self.song.id]))
         other = self.client_class()
-        self.assertNotContains(other.get(reverse("customer_dashboard")), "Song A")
+        self.assertNotContains(other.get(reverse("venue_customer_dashboard", args=[self.venue.slug])), "Song A")
 
     def test_get_not_allowed(self):
         resp = self.client.get(reverse("request_song", args=[self.song.id]))
@@ -162,7 +186,7 @@ class RequestFlowTests(TestCase):
         self.assertEqual(SongRequest.objects.get().requested_by, self.customer)
 
     def test_staff_can_update_status_customer_cannot(self):
-        req = SongRequest.objects.create(song_id=self.song, requested_by=self.customer)
+        req = SongRequest.objects.create(song_id=self.song, venue_id=self.venue, requested_by=self.customer)
         url = reverse("update_request", args=[req.id])
 
         self.client.login(username="cust", password=PASSWORD)
@@ -172,6 +196,7 @@ class RequestFlowTests(TestCase):
 
         self.client.logout()
         self.client.login(username="staffer", password=PASSWORD)
+        choose_venue(self.client, self.venue)
         self.client.post(url, {"status": "APPROVED"})
         req.refresh_from_db()
         self.assertEqual(req.status, SongRequest.APPROVED)
@@ -181,7 +206,7 @@ class RequestFlowTests(TestCase):
         self.assertEqual(req.status, SongRequest.APPROVED)
 
     def test_staff_cannot_mark_pending_request_played(self):
-        req = SongRequest.objects.create(song_id=self.song)
+        req = SongRequest.objects.create(song_id=self.song, venue_id=self.venue)
         self.client.login(username="staffer", password=PASSWORD)
         self.client.post(reverse("update_request", args=[req.id]), {"status": "PLAYED"})
         req.refresh_from_db()
@@ -203,6 +228,9 @@ class OwnerRoleManagementTests(TestCase):
     def setUp(self):
         self.owner = make_user("boss", roles.OWNER)
         self.target = make_user("target", roles.CUSTOMER)
+        self.venue = Venue.objects.create(name='Owner venue', owner=self.owner)
+        self.venue.staff.add(self.target)
+        choose_venue(self.client, self.venue)
 
     def test_owner_can_promote_user(self):
         self.client.login(username="boss", password=PASSWORD)
@@ -260,6 +288,61 @@ class VenuePolicyTests(TestCase):
             VenueConfig.objects.create(venue=self.venue, min_bpm=120, max_bpm=80)
 
 
+class VenueRequestIsolationTests(TestCase):
+    def setUp(self):
+        self.owner = make_user('owner_a', roles.OWNER)
+        self.staff = make_user('staff_a', roles.STAFF)
+        self.venue = Venue.objects.create(name='Venue A', owner=self.owner)
+        self.venue.staff.add(self.staff)
+        self.other = Venue.objects.create(name='Venue B')
+        self.song = Song.objects.create(title='A song', artist='Artist', musicbrainz_id='venue-song')
+
+    def test_guest_requests_follow_the_venue_in_the_url(self):
+        first = reverse('venue_request_song', args=[self.venue.slug, self.song.pk])
+        second = reverse('venue_request_song', args=[self.other.slug, self.song.pk])
+        self.client.post(first)
+        self.client.post(second)
+        self.assertEqual(SongRequest.objects.filter(venue_id=self.venue).count(), 1)
+        self.assertEqual(SongRequest.objects.filter(venue_id=self.other).count(), 1)
+        page = self.client.get(reverse('venue_customer_dashboard', args=[self.venue.slug]))
+        self.assertEqual(len(page.context['requests']), 1)
+
+    def test_staff_cannot_view_or_change_another_venue(self):
+        other_request = SongRequest.objects.create(song_id=self.song, venue_id=self.other)
+        self.client.login(username='staff_a', password=PASSWORD)
+        response = self.client.get(reverse('venue_staff_dashboard', args=[self.other.slug]))
+        self.assertEqual(response.status_code, 403)
+        response = self.client.post(
+            reverse('venue_update_request', args=[self.venue.slug, other_request.pk]),
+            {'status': SongRequest.APPROVED},
+        )
+        self.assertEqual(response.status_code, 404)
+        other_request.refresh_from_db()
+        self.assertEqual(other_request.status, SongRequest.PENDING)
+
+    def test_new_request_must_have_a_venue(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            SongRequest.objects.create(song_id=self.song)
+        legacy = SongRequest.objects.create(song_id=self.song, legacy_unassigned=True)
+        self.assertIsNone(legacy.venue_id)
+
+    def test_request_without_a_venue_is_not_created(self):
+        response = self.client.post(reverse('request_song', args=[self.song.pk]))
+        self.assertRedirects(response, reverse('home'))
+        self.assertFalse(SongRequest.objects.exists())
+
+    def test_owner_cannot_change_staff_from_another_venue(self):
+        outsider = make_user('staff_b', roles.STAFF)
+        self.other.staff.add(outsider)
+        self.client.login(username='owner_a', password=PASSWORD)
+        response = self.client.post(
+            reverse('venue_set_user_role', args=[self.venue.slug, outsider.pk]),
+            {'role': roles.CUSTOMER},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(roles.get_role(outsider), roles.STAFF)
+
+
 class RequestMigrationTests(TransactionTestCase):
     def migrate_to(self, target, replace_migrations=True):
         executor = MigrationExecutor(connection)
@@ -269,7 +352,7 @@ class RequestMigrationTests(TransactionTestCase):
         return executor.loader.project_state([('core', target)]).apps
 
     def tearDown(self):
-        self.migrate_to('0008_venue_policies')
+        self.migrate_to('0010_request_venue_constraint')
         super().tearDown()
 
     def test_upgrade_from_0004_preserves_request_identity(self):
@@ -300,6 +383,10 @@ class RequestMigrationTests(TransactionTestCase):
         self.assertIsNone(restored_guest.requested_by_id)
         self.assertEqual(restored_guest.session_key, 'guest-session')
         self.assertEqual(restored_guest.status, 'PENDING')
+        scoped = self.migrate_to('0010_request_venue_constraint')
+        legacy = scoped.get_model('core', 'SongRequest').objects.get(pk=guest.pk)
+        self.assertTrue(legacy.legacy_unassigned)
+        self.assertIsNone(legacy.venue_id_id)
 
     def test_existing_original_0005_upgrades_without_replaying_it(self):
         self.migrate_to('0004_songrequest_session_key')

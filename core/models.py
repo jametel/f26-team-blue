@@ -84,11 +84,12 @@ class SongRequest(models.Model):
     PLAYED = "PLAYED"
     id = models.AutoField(primary_key=True)
     user_id = models.ForeignKey(UserProfile, on_delete=models.SET_NULL, null=True, blank=True)
-    venue_id = models.ForeignKey(Venue, on_delete=models.SET_NULL, null=True, blank=True)
+    venue_id = models.ForeignKey(Venue, on_delete=models.PROTECT, null=True, blank=True)
     song_id = models.ForeignKey(Song, on_delete=models.CASCADE)
     requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
                                      null=True, blank=True, related_name="song_requests")
     session_key = models.CharField(max_length=40, blank=True, db_index=True)
+    legacy_unassigned = models.BooleanField(default=False)
     status = models.CharField(max_length=20, choices=[
         ("PENDING", "Pending"),
         ("APPROVED", "Approved"),
@@ -96,6 +97,14 @@ class SongRequest(models.Model):
         ("PLAYED", "Played"),
     ], default="PENDING")
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(venue_id__isnull=False) | models.Q(legacy_unassigned=True),
+                name="request_has_venue_or_is_legacy",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.user_id} — {self.song_id} — {self.status}"
