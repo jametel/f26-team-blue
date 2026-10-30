@@ -23,3 +23,9 @@ requests to user or venue ID 1. Check those associations before relying on them.
 Migration 0007 restores identity only where the safe replacement saved it.
 During the repair, new requests can remain unassigned until venue-specific
 request routing is implemented.
+
+Venue owners, staff memberships, music settings, allowed or blocked genres,
+and song blacklists can be managed in Django admin. Existing venues receive a
+public slug during migration. Assign their owners before using venue access
+controls. The default unknown-song policy is staff review; the Vibe Engine will
+enforce it when implemented.
