@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 from core.models import (
-    Song, SongRequest, UserProfile, Venue, VenueConfig, VenueSongBlacklist,
+    Song, SongFeatures, SongRequest, UserProfile, Venue, VenueConfig, VenueSongBlacklist,
     venueGenreFilter,
 )
 
@@ -28,5 +28,6 @@ class VenueAdmin(admin.ModelAdmin):
     inlines = (VenueConfigInline, VenueGenreInline, VenueBlacklistInline)
 
 admin.site.register(Song)
+admin.site.register(SongFeatures)
 admin.site.register(SongRequest)
 admin.site.register(UserProfile)
