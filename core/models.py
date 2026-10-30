@@ -1,18 +1,14 @@
-from asyncio.base_futures import _PENDING
-
 from django.conf import settings
 from django.db import models
 from django.contrib.auth.models import User
-
-from core.context_processors import role
 
 class Song(models.Model):
     id = models.AutoField(primary_key=True)
     title = models.CharField(max_length=255)
     artist = models.CharField(max_length=255)
-    genre = models.CharField(max_length=100)
-    BPM = models.IntegerField()
-    is_explicit = models.BooleanField(default=False)
+    genre = models.CharField(max_length=100, null=True, blank=True)
+    BPM = models.IntegerField(null=True, blank=True)
+    is_explicit = models.BooleanField(null=True, blank=True)
     musicbrainz_id = models.CharField(max_length=100, unique=True)
 
     def __str__(self):
@@ -35,10 +31,17 @@ class Venue(models.Model):
         return self.name
 
 class SongRequest(models.Model):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    PLAYED = "PLAYED"
     id = models.AutoField(primary_key=True)
-    user_id = models.ForeignKey(UserProfile, on_delete=models.CASCADE)
-    venue_id = models.ForeignKey(Venue, on_delete=models.CASCADE)
+    user_id = models.ForeignKey(UserProfile, on_delete=models.SET_NULL, null=True, blank=True)
+    venue_id = models.ForeignKey(Venue, on_delete=models.SET_NULL, null=True, blank=True)
     song_id = models.ForeignKey(Song, on_delete=models.CASCADE)
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                     null=True, blank=True, related_name="song_requests")
+    session_key = models.CharField(max_length=40, blank=True, db_index=True)
     status = models.CharField(max_length=20, choices=[
         ("PENDING", "Pending"),
         ("APPROVED", "Approved"),
