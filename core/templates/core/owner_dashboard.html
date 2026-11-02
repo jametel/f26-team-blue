@@ -136,10 +136,12 @@
     <div class="panel dashboard-panel">
         <h2>Venue & Vibe Management</h2>
 
-        <p class="muted">
-            Venue settings, music preferences, and vibe controls
-            are planned for a future sprint.
-        </p>
+        <p class="muted">Venue settings, music preferences, and vibe rules are managed in Django admin.</p>
+        {% if user.is_staff %}
+            <a href="{% url 'admin:core_venue_change' current_venue.pk %}">Manage venue settings</a>
+        {% else %}
+            <p class="muted">Contact an administrator to update these settings.</p>
+        {% endif %}
     </div>
 
 </section>

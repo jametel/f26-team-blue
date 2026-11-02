@@ -38,7 +38,7 @@ def _song_to_result(song):
 
 def song_search(request, venue_slug=None):
     venue = current_venue(request, venue_slug)
-    query = request.GET.get("q", "")
+    query = request.GET.get("q", "").strip()
     results = []
     search_error = False
     if query:
@@ -46,25 +46,27 @@ def song_search(request, venue_slug=None):
         # repeated searches don't hit MusicBrainz. When the library is empty for
         # this term, fetch from MusicBrainz and persist the hits so they become
         # static on the next search.
-        local = Song.objects.filter(title__icontains=query).order_by("-id")[:10]
+        local = Song.objects.filter(Q(title__icontains=query) | Q(artist__icontains=query)).order_by("-id")[:10]
         if not local.exists():
             try:
                 songs = MusicBrainzClient().search_songs(query)
             except MusicBrainzError:
                 songs = []
                 search_error = True
+            found = []
             for item in songs:
                 mb_id = item.get("musicbrainz_id", "")
                 if not mb_id:
                     continue
-                Song.objects.update_or_create(
+                song, _ = Song.objects.update_or_create(
                     musicbrainz_id=mb_id,
                     defaults={
                         "title": item["name"],
                         "artist": item["artist"]["name"],
                     },
                 )
-            local = Song.objects.filter(title__icontains=query).order_by("-id")[:10]
+                found.append(song)
+            local = found
         results = [_song_to_result(s) for s in local]
     return render(request, "core/song_search.html", {
         "query": query,
@@ -94,13 +96,32 @@ def register(request):
 
 @login_required
 def dashboard(request):
-    """Send each logged-in user to the dashboard for their role."""
+    """Open the role dashboard, or help the user choose an accessible venue."""
     role = roles.get_role(request.user)
-    if role == roles.OWNER:
-        return redirect("owner_dashboard")
-    if role == roles.STAFF:
-        return redirect("staff_dashboard")
-    return redirect("customer_dashboard")
+    venue = current_venue(request)
+    if venue and role in (roles.OWNER, roles.STAFF):
+        if role == roles.OWNER and (request.user.is_superuser or venue.owner_id == request.user.pk):
+            return redirect("owner_dashboard")
+        if roles.can_manage_venue(request.user, venue):
+            return redirect("staff_dashboard")
+        venue = None
+    if venue:
+        return redirect("customer_dashboard")
+
+    venues = Venue.objects.order_by('name')
+    if role in (roles.OWNER, roles.STAFF) and not request.user.is_superuser:
+        venues = venues.filter(Q(owner=request.user) | Q(staff=request.user)).distinct()
+    return render(request, "core/dashboard_venues.html", {"venues": venues})
+
+
+@login_required
+def select_dashboard_venue(request, venue_slug):
+    venue = get_object_or_404(Venue, slug=venue_slug)
+    role = roles.get_role(request.user)
+    if role in (roles.OWNER, roles.STAFF) and not roles.can_manage_venue(request.user, venue):
+        return HttpResponseForbidden("You cannot manage this venue.")
+    request.session['venue_slug'] = venue.slug
+    return redirect('dashboard')
 
 
 # ---------------------------------------------------------------------------

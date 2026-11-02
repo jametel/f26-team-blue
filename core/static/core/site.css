@@ -61,6 +61,7 @@ form {  /* override user agent stylesheet */
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 18px
 }
 
@@ -90,6 +91,7 @@ form {  /* override user agent stylesheet */
 
 .site-nav {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 27px;
     font-size: 14px;
@@ -267,7 +269,7 @@ form {  /* override user agent stylesheet */
     place-items: center;
     border: 7px solid #172a21;
     color: #193126;
-    font: 800 60px Outfit
+    font: 800 60px Outfit, sans-serif
 }
 
 .equalizer {
@@ -330,7 +332,7 @@ form {  /* override user agent stylesheet */
 }
 
 .section-title h2 {
-    font: 700 36px Outfit;
+    font: 700 36px Outfit, sans-serif;
     margin: 0 0 8px
 }
 
@@ -356,7 +358,7 @@ form {  /* override user agent stylesheet */
 }
 
 .feature-card h3 {
-    font: 700 21px Outfit;
+    font: 700 21px Outfit, sans-serif;
     margin: 18px 0 6px
 }
 
@@ -449,7 +451,7 @@ form {  /* override user agent stylesheet */
 
 .results-heading h2,
 .panel h2 {
-    font: 700 24px Outfit;
+    font: 700 24px Outfit, sans-serif;
     margin: 0
 }
 
@@ -492,7 +494,7 @@ form {  /* override user agent stylesheet */
 
 .song-info h3 {
     margin: 0;
-    font: 700 17px Outfit;
+    font: 700 17px Outfit, sans-serif;
     overflow-wrap: anywhere
 }
 
@@ -535,7 +537,7 @@ form {  /* override user agent stylesheet */
 }
 
 .auth-card h1 {
-    font: 700 30px Outfit;
+    font: 700 30px Outfit, sans-serif;
     margin: 0
 }
 
@@ -570,6 +572,11 @@ form {  /* override user agent stylesheet */
 
 .dashboard-panel {
     margin: 20px 0
+}
+
+.venue-picker {
+    padding: 28px;
+    margin: 20px 0 75px
 }
 
 .panel-heading {

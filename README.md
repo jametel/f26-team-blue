@@ -27,8 +27,8 @@ venue in Django admin. New requests require a venue.
 Venue owners, staff memberships, music settings, allowed or blocked genres,
 and song blacklists can be managed in Django admin. Existing venues receive a
 public slug during migration. Assign their owners before using venue access
-controls. The default unknown-song policy is staff review; the Vibe Engine will
-enforce it when implemented.
+controls. The Vibe Engine enforces the unknown-song policy, which defaults to
+staff review.
 
 Each venue's public entry URL is `/venues/<slug>/`. Staff and owners select a
 venue before opening its dashboard. Assign owners and staff in Django admin.

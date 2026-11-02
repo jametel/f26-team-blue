@@ -30,6 +30,7 @@ urlpatterns = [
 
     # Role dashboards
     path("dashboard/", views.dashboard, name="dashboard"),
+    path("dashboard/venues/<slug:venue_slug>/", views.select_dashboard_venue, name="select_dashboard_venue"),
     path("my-requests/", views.customer_dashboard, name="customer_dashboard"),
     path("staff/", views.staff_dashboard, name="staff_dashboard"),
     path("owner/", views.owner_dashboard, name="owner_dashboard"),

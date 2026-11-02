@@ -1,0 +1,26 @@
+{% extends "core/base.html" %}
+{% block title %}Your dashboard - RhythmiQ{% endblock %}
+{% block content %}
+<section class="page-heading">
+    <p class="eyebrow">Your account</p>
+    <h1>Your <span class="gradient-text">dashboard.</span></h1>
+    {% if user_role == 'Owner' or user_role == 'Staff' %}
+        <p>Choose a venue you manage to open your dashboard.</p>
+    {% else %}
+        <p>Choose a venue to see your requests.</p>
+    {% endif %}
+</section>
+<section class="panel dashboard-panel">
+    <h2>Choose a venue</h2>
+    {% for venue in venues %}
+        <p><a class="btn btn-secondary" href="{% url 'select_dashboard_venue' venue.slug %}">{{ venue.name }}</a></p>
+    {% empty %}
+        <p>No venues are available for this account yet.</p>
+        {% if user.is_staff %}
+            <a class="btn btn-primary" href="{% url 'admin:core_venue_add' %}">Add a venue in admin</a>
+        {% else %}
+            <p>Ask an administrator to add a venue or grant you access.</p>
+        {% endif %}
+    {% endfor %}
+</section>
+{% endblock %}
