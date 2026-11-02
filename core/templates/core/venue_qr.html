@@ -1,0 +1,17 @@
+{% extends "core/base.html" %}
+{% block title %}Venue QR code - RhythmiQ{% endblock %}
+{% block content %}
+<section class="page-heading">
+    <h1>QR code for {{ venue.name }}</h1>
+    <p>Guests can scan this code to request songs without an account.</p>
+</section>
+<section class="panel dashboard-panel">
+    {% if configuration_error %}
+        <p>{{ configuration_error }}</p>
+    {% else %}
+        <p><img src="{% url 'venue_qr_image' venue.slug %}" alt="QR code for {{ venue.name }}"></p>
+        <p>{{ public_url }}</p>
+        <a class="btn btn-primary" href="{% url 'venue_qr_image' venue.slug %}?download=1">Download QR code</a>
+    {% endif %}
+</section>
+{% endblock %}

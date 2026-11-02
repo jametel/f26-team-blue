@@ -4,13 +4,20 @@ from django.db import IntegrityError, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.loader import MigrationLoader
 from django.core.exceptions import ValidationError
-from django.test import TestCase, TransactionTestCase
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from unittest import skipUnless
 from unittest.mock import patch
+from io import BytesIO
 import requests
+from PIL import Image
+
+try:
+    import zxingcpp
+except ImportError:
+    zxingcpp = None
 
 from core import roles
 from core.models import (Queue, Song, SongDecision, SongFeatures, SongRequest, Venue, VenueConfig,
@@ -217,6 +224,54 @@ class NavigationTests(TestCase):
         response = self.client.get(reverse('dashboard'), follow=True)
         self.assertContains(response, 'Choose a venue you manage')
         self.assertNotContains(response, 'Staff Dashboard')
+
+
+@override_settings(PUBLIC_BASE_URL='https://music.example.test')
+class VenueQRTests(TestCase):
+    def setUp(self):
+        self.owner = make_user('qr_owner', roles.OWNER)
+        self.staff = make_user('qr_staff', roles.STAFF)
+        self.other = make_user('qr_other', roles.STAFF)
+        self.venue = Venue.objects.create(name='QR Venue', owner=self.owner)
+        self.venue.staff.add(self.staff)
+
+    def test_venue_managers_can_view_and_download_their_qr_code(self):
+        for user in (self.owner, self.staff):
+            with self.subTest(user=user.username):
+                self.client.force_login(user)
+                page = self.client.get(reverse('venue_qr', args=[self.venue.slug]))
+                self.assertContains(page, f'https://music.example.test/venues/{self.venue.slug}/')
+                image = self.client.get(reverse('venue_qr_image', args=[self.venue.slug]), {'download': '1'})
+                self.assertEqual(image['Content-Type'], 'image/png')
+                self.assertIn('attachment;', image['Content-Disposition'])
+
+    @skipUnless(zxingcpp is not None, 'Install requirements-test.txt to decode QR codes')
+    def test_generated_image_scans_to_the_correct_public_venue(self):
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse('venue_qr_image', args=[self.venue.slug]))
+        result = zxingcpp.read_barcode(Image.open(BytesIO(response.content)))
+        self.assertIsNotNone(result)
+        self.assertEqual(result.text, f'https://music.example.test/venues/{self.venue.slug}/')
+        guest = self.client_class()
+        entry = guest.get(reverse('select_venue', args=[self.venue.slug]), follow=True)
+        self.assertEqual(entry.status_code, 200)
+        self.assertContains(entry, self.venue.name)
+
+    def test_other_users_cannot_access_qr_management(self):
+        url = reverse('venue_qr', args=[self.venue.slug])
+        image_url = reverse('venue_qr_image', args=[self.venue.slug])
+        self.assertEqual(self.client.get(url).status_code, 302)
+        self.client.force_login(self.other)
+        self.assertEqual(self.client.get(url).status_code, 403)
+        self.assertEqual(self.client.get(image_url).status_code, 403)
+
+    def test_invalid_public_origin_is_reported_without_using_the_request_host(self):
+        self.client.force_login(self.owner)
+        for origin in ('', 'https://user:password@example.test', 'https://example.test/path', 'javascript:bad'):
+            with self.subTest(origin=origin), self.settings(PUBLIC_BASE_URL=origin):
+                page = self.client.get(reverse('venue_qr', args=[self.venue.slug]))
+                self.assertContains(page, 'Set PUBLIC_BASE_URL')
+                self.assertEqual(self.client.get(reverse('venue_qr_image', args=[self.venue.slug])).status_code, 503)
 
 
 class RequestFlowTests(TestCase):
