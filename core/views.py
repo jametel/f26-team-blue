@@ -193,6 +193,7 @@ def request_song(request, song_id, venue_slug=None):
         request.session.create()
 
     with transaction.atomic():
+        # Keep the limit checks and request creation under the queue's venue lock.
         venue = lock_venue(venue)
         mine = _patron_requests(request, venue)
         if not venue.requests_enabled:
