@@ -5,7 +5,7 @@ from django.contrib.auth.forms import UserCreationForm
 from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 from django.db.models import Count, Prefetch, Q
-from django.http import Http404, HttpResponse, HttpResponseForbidden
+from django.http import Http404, HttpResponse, HttpResponseBadRequest, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
@@ -16,6 +16,7 @@ from core.services.musicbrainz import MusicBrainzClient, MusicBrainzError
 from core.services.queue import move_queue_entry, set_queue_priority, update_request_status
 from core.services.vibe_engine import evaluate_request, record_decision
 from core.services.venue_qr import venue_public_url, venue_qr_png
+from core.services.venue import lock_venue
 from core.venue_context import current_venue
 
 
@@ -189,18 +190,21 @@ def request_song(request, song_id, venue_slug=None):
     if not request.session.session_key:
         request.session.create()
 
-    mine = _patron_requests(request, venue)
-    if mine.filter(song_id=song, status=SongRequest.PENDING).exists():
-        messages.info(request, f"You already have a pending request for \"{song.title}\".")
-    elif mine.filter(status=SongRequest.PENDING).count() >= MAX_PENDING_PER_PATRON:
-        messages.error(
-            request,
-            f"You have {MAX_PENDING_PER_PATRON} pending requests. "
-            "Wait for some to be reviewed before adding more.",
-        )
-    else:
-        decision = evaluate_request(venue, song)
-        with transaction.atomic():
+    with transaction.atomic():
+        venue = lock_venue(venue)
+        mine = _patron_requests(request, venue)
+        if not venue.requests_enabled:
+            messages.info(request, "Song requests are currently unavailable at this venue.")
+        elif mine.filter(song_id=song, status=SongRequest.PENDING).exists():
+            messages.info(request, f"You already have a pending request for \"{song.title}\".")
+        elif mine.filter(status=SongRequest.PENDING).count() >= MAX_PENDING_PER_PATRON:
+            messages.error(
+                request,
+                f"You have {MAX_PENDING_PER_PATRON} pending requests. "
+                "Wait for some to be reviewed before adding more.",
+            )
+        else:
+            decision = evaluate_request(venue, song)
             song_request = None
             if decision.outcome != SongDecision.Outcome.REJECT:
                 song_request = SongRequest.objects.create(
@@ -212,13 +216,30 @@ def request_song(request, song_id, venue_slug=None):
                     if request.user.is_authenticated else None,
                 )
             record_decision(venue, song, decision, song_request)
-        if decision.outcome == SongDecision.Outcome.REJECT:
-            messages.error(request, f"{song.title} does not meet this venue's music settings.")
-        elif decision.outcome == SongDecision.Outcome.REVIEW:
-            messages.info(request, f"{song.title} needs staff review.")
-        else:
-            messages.success(request, f"Requested \"{song.title}\".")
+            if decision.outcome == SongDecision.Outcome.REJECT:
+                messages.error(request, f"{song.title} does not meet this venue's music settings.")
+            elif decision.outcome == SongDecision.Outcome.REVIEW:
+                messages.info(request, f"{song.title} needs staff review.")
+            else:
+                messages.success(request, f"Requested \"{song.title}\".")
     return redirect("venue_customer_dashboard", venue_slug=venue.slug)
+
+
+@role_required([roles.STAFF, roles.OWNER])
+@require_POST
+def set_request_availability(request, venue_slug):
+    venue = get_object_or_404(Venue, slug=venue_slug)
+    if not roles.can_manage_venue(request.user, venue):
+        return HttpResponseForbidden("You cannot manage this venue.")
+    value = request.POST.get('enabled')
+    if value not in ('true', 'false'):
+        return HttpResponseBadRequest('Invalid request availability.')
+    with transaction.atomic():
+        venue = lock_venue(venue)
+        venue.requests_enabled = value == 'true'
+        venue.save(update_fields=['requests_enabled'])
+    messages.success(request, 'Request availability updated.')
+    return redirect('venue_staff_dashboard', venue_slug=venue.slug)
 
 
 # ---------------------------------------------------------------------------

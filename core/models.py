@@ -47,6 +47,7 @@ class Venue(models.Model):
                               null=True, blank=True, related_name="owned_venues")
     staff = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="staff_venues")
     qr_code = models.FileField(upload_to="qr_codes/", null=True, blank=True)
+    requests_enabled = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):

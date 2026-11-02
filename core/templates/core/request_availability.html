@@ -1,0 +1,12 @@
+<section class="panel dashboard-panel">
+    <h2>Song requests</h2>
+    <p>New requests are {% if current_venue.requests_enabled %}enabled{% else %}disabled{% endif %} for {{ current_venue.name }}.</p>
+    <form method="post" action="{% url 'venue_request_availability' current_venue.slug %}">
+        {% csrf_token %}
+        {% if current_venue.requests_enabled %}
+            <button class="btn btn-secondary" name="enabled" value="false" type="submit">Disable requests</button>
+        {% else %}
+            <button class="btn btn-primary" name="enabled" value="true" type="submit">Enable requests</button>
+        {% endif %}
+    </form>
+</section>

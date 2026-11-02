@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier, Event
 from unittest import skipUnless
 from unittest.mock import patch
 from io import BytesIO
@@ -26,6 +26,7 @@ from core.services.queue import move_queue_entry, set_queue_priority, update_req
 from core.services.musicbrainz import MusicBrainzClient, MusicBrainzError
 from core.services.song_features import FeatureData, get_song_features, refresh_song_features
 from core.services.vibe_engine import evaluate_request
+from core.services.venue import lock_venue
 
 User = get_user_model()
 PASSWORD = "pw-12345"
@@ -272,6 +273,59 @@ class VenueQRTests(TestCase):
                 page = self.client.get(reverse('venue_qr', args=[self.venue.slug]))
                 self.assertContains(page, 'Set PUBLIC_BASE_URL')
                 self.assertEqual(self.client.get(reverse('venue_qr_image', args=[self.venue.slug])).status_code, 503)
+
+
+class RequestAvailabilityTests(TestCase):
+    def setUp(self):
+        self.owner = make_user('availability_owner', roles.OWNER)
+        self.staff = make_user('availability_staff', roles.STAFF)
+        self.other = make_user('availability_other', roles.STAFF)
+        self.venue = Venue.objects.create(name='Availability venue', owner=self.owner)
+        self.venue.staff.add(self.staff)
+        self.song = Song.objects.create(title='Available song', artist='Artist', musicbrainz_id='available-song')
+        self.url = reverse('venue_request_availability', args=[self.venue.slug])
+        self.request_url = reverse('venue_request_song', args=[self.venue.slug, self.song.pk])
+
+    def test_owner_and_assigned_staff_can_change_availability(self):
+        for user in (self.owner, self.staff):
+            with self.subTest(user=user.username):
+                self.client.force_login(user)
+                self.assertEqual(self.client.post(self.url, {'enabled': 'false'}).status_code, 302)
+                self.venue.refresh_from_db()
+                self.assertFalse(self.venue.requests_enabled)
+                self.client.post(self.url, {'enabled': 'true'})
+                self.venue.refresh_from_db()
+                self.assertTrue(self.venue.requests_enabled)
+
+    def test_other_users_cannot_change_availability(self):
+        self.client.force_login(self.other)
+        self.assertEqual(self.client.post(self.url, {'enabled': 'false'}).status_code, 403)
+        self.venue.refresh_from_db()
+        self.assertTrue(self.venue.requests_enabled)
+
+    def test_disabled_venue_rejects_direct_post_and_preserves_existing_data(self):
+        existing = SongRequest.objects.create(venue_id=self.venue, song_id=self.song, status=SongRequest.APPROVED)
+        entry = Queue.objects.create(venue_id=self.venue, song_request_id=existing, position=1)
+        self.venue.requests_enabled = False
+        self.venue.save(update_fields=['requests_enabled'])
+        page = self.client.get(reverse('venue_song_search', args=[self.venue.slug]))
+        self.assertContains(page, 'Song requests are currently unavailable')
+        response = self.client.post(self.request_url, follow=True)
+        self.assertContains(response, 'Song requests are currently unavailable')
+        self.assertEqual(list(SongRequest.objects.values_list('pk', flat=True)), [existing.pk])
+        self.assertFalse(SongDecision.objects.exists())
+        self.assertEqual(list(Queue.objects.values_list('pk', flat=True)), [entry.pk])
+
+    def test_new_venue_accepts_requests_by_default_without_config(self):
+        self.assertTrue(self.venue.requests_enabled)
+        self.client.post(self.request_url)
+        self.assertTrue(SongRequest.objects.filter(venue_id=self.venue).exists())
+
+    def test_invalid_availability_is_rejected(self):
+        self.client.force_login(self.staff)
+        self.assertEqual(self.client.post(self.url, {'enabled': 'invalid'}).status_code, 400)
+        self.venue.refresh_from_db()
+        self.assertTrue(self.venue.requests_enabled)
 
 
 class RequestFlowTests(TestCase):
@@ -717,6 +771,61 @@ class RequestIntegrationTests(TestCase):
         self.assertFalse(Queue.objects.filter(song_request_id=song_request).exists())
 
 
+@skipUnless(connection.vendor == 'postgresql', 'Request concurrency requires PostgreSQL')
+class AvailabilityConcurrencyTests(TransactionTestCase):
+    def test_disable_waits_for_in_progress_request(self):
+        owner = make_user('concurrent_owner', roles.OWNER)
+        venue = Venue.objects.create(name='Concurrent availability', owner=owner)
+        song = Song.objects.create(title='Concurrent song', artist='Artist', musicbrainz_id='concurrent-availability')
+        guest = self.client_class()
+        owner_client = self.client_class()
+        owner_client.force_login(owner)
+        evaluating = Event()
+        finish_request = Event()
+        toggle_attempted = Event()
+
+        def track_lock(venue_arg):
+            if evaluating.is_set():
+                toggle_attempted.set()
+            return lock_venue(venue_arg)
+
+        def paused_evaluation(venue_arg, song_arg):
+            evaluating.set()
+            if not finish_request.wait(10):
+                raise TimeoutError('Request was not released')
+            return evaluate_request(venue_arg, song_arg)
+
+        def submit():
+            from django.db import connections
+            try:
+                return guest.post(reverse('venue_request_song', args=[venue.slug, song.pk])).status_code
+            finally:
+                connections.close_all()
+
+        def disable():
+            from django.db import connections
+            try:
+                return owner_client.post(reverse('venue_request_availability', args=[venue.slug]), {'enabled': 'false'}).status_code
+            finally:
+                connections.close_all()
+
+        with patch('core.views.evaluate_request', side_effect=paused_evaluation), patch('core.views.lock_venue', side_effect=track_lock):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                request_future = executor.submit(submit)
+                self.assertTrue(evaluating.wait(10))
+                toggle_future = executor.submit(disable)
+                self.assertTrue(toggle_attempted.wait(10))
+                self.assertFalse(toggle_future.done())
+                finish_request.set()
+                self.assertEqual(request_future.result(timeout=20), 302)
+                self.assertEqual(toggle_future.result(timeout=20), 302)
+        venue.refresh_from_db()
+        self.assertFalse(venue.requests_enabled)
+        self.assertEqual(SongRequest.objects.filter(venue_id=venue).count(), 1)
+        guest.post(reverse('venue_request_song', args=[venue.slug, song.pk]))
+        self.assertEqual(SongRequest.objects.filter(venue_id=venue).count(), 1)
+
+
 @skipUnless(connection.vendor == 'postgresql', 'Queue concurrency requires PostgreSQL')
 class QueueConcurrencyTests(TransactionTestCase):
     def test_concurrent_approvals_receive_distinct_positions(self):
@@ -751,8 +860,14 @@ class RequestMigrationTests(TransactionTestCase):
         return executor.loader.project_state([('core', target)]).apps
 
     def tearDown(self):
-        self.migrate_to('0017_queue_constraints')
+        self.migrate_to('0018_venue_requests_enabled')
         super().tearDown()
+
+    def test_request_availability_upgrade_keeps_existing_venues_enabled(self):
+        old = self.migrate_to('0017_queue_constraints')
+        venue = old.get_model('core', 'Venue').objects.create(name='Existing venue', slug='existing-venue')
+        current = self.migrate_to('0018_venue_requests_enabled')
+        self.assertTrue(current.get_model('core', 'Venue').objects.get(pk=venue.pk).requests_enabled)
 
     def test_upgrade_from_0004_preserves_request_identity(self):
         old = self.migrate_to('0004_songrequest_session_key')
