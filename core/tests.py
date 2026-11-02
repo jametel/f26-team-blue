@@ -691,6 +691,31 @@ class QueueTests(TestCase):
 
 class SearchReliabilityTests(TestCase):
     @patch('core.views.MusicBrainzClient.search_songs')
+    def test_combined_terms_match_title_and_artist_in_cache(self, search):
+        Song.objects.create(title='Dreams', artist='Fleetwood Mac', musicbrainz_id='dreams-match')
+        Song.objects.create(title='Dreams', artist='Other Artist', musicbrainz_id='dreams-other')
+        venue = Venue.objects.create(name='Search venue')
+        response = self.client.get(reverse('venue_song_search', args=[venue.slug]), {'q': '  DREAM fleetwood  '})
+        self.assertContains(response, 'Fleetwood Mac')
+        self.assertNotContains(response, 'Other Artist')
+        self.assertContains(response, reverse('venue_request_song', args=[venue.slug, Song.objects.get(musicbrainz_id='dreams-match').pk]))
+        search.assert_not_called()
+
+    @patch('core.views.MusicBrainzClient.search_songs')
+    def test_duplicate_provider_recordings_appear_once(self, search):
+        recording = {'name': 'A unique recording', 'artist': {'name': 'Artist'}, 'musicbrainz_id': 'duplicate-result'}
+        search.return_value = [recording, recording]
+        response = self.client.get(reverse('song_search'), {'q': 'provider query'})
+        self.assertContains(response, 'A unique recording', count=1)
+        self.assertEqual(Song.objects.filter(musicbrainz_id='duplicate-result').count(), 1)
+
+    @patch('core.views.MusicBrainzClient.search_songs', return_value=[])
+    def test_no_matches_is_distinct_from_provider_failure(self, search):
+        response = self.client.get(reverse('song_search'), {'q': 'no such recording'})
+        self.assertContains(response, 'No matches found')
+        self.assertNotContains(response, 'Search unavailable')
+
+    @patch('core.views.MusicBrainzClient.search_songs')
     def test_search_by_artist_uses_local_cache(self, search):
         Song.objects.create(title='A song', artist='A unique artist', musicbrainz_id='artist-cached')
         response = self.client.get(reverse('song_search'), {'q': 'unique artist'})

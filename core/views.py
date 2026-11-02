@@ -72,11 +72,11 @@ def song_search(request, venue_slug=None):
     results = []
     search_error = False
     if query:
-        # Issue #2 (static song search): serve from the local database first so
-        # repeated searches don't hit MusicBrainz. When the library is empty for
-        # this term, fetch from MusicBrainz and persist the hits so they become
-        # static on the next search.
-        local = Song.objects.filter(Q(title__icontains=query) | Q(artist__icontains=query)).order_by("-id")[:10]
+        # Match all terms across title and artist before searching MusicBrainz.
+        matches = Song.objects.all()
+        for term in query.split():
+            matches = matches.filter(Q(title__icontains=term) | Q(artist__icontains=term))
+        local = matches.order_by("-id")[:10]
         if not local.exists():
             try:
                 songs = MusicBrainzClient().search_songs(query)
@@ -84,10 +84,12 @@ def song_search(request, venue_slug=None):
                 songs = []
                 search_error = True
             found = []
+            seen_ids = set()
             for item in songs:
                 mb_id = item.get("musicbrainz_id", "")
-                if not mb_id:
+                if not mb_id or mb_id in seen_ids:
                     continue
+                seen_ids.add(mb_id)
                 song, _ = Song.objects.update_or_create(
                     musicbrainz_id=mb_id,
                     defaults={
