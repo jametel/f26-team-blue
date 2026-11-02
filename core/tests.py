@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.conf import settings
 from django.db import IntegrityError, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.loader import MigrationLoader
@@ -7,10 +8,11 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier, Event
+from threading import Barrier, Event, Lock
 from unittest import skipUnless
 from unittest.mock import patch
 from io import BytesIO
+from urllib.parse import urlsplit
 import requests
 from PIL import Image
 
@@ -769,6 +771,33 @@ class SearchReliabilityTests(TestCase):
 
 
 class RequestIntegrationTests(TestCase):
+    @override_settings(PUBLIC_BASE_URL='https://music.example.test')
+    @skipUnless(zxingcpp is not None, 'Install requirements-test.txt to decode QR codes')
+    def test_guest_flow_from_qr_to_queue_and_disabled_requests(self):
+        owner = make_user('flow_owner', roles.OWNER)
+        venue = Venue.objects.create(name='Flow venue', owner=owner)
+        first_song = Song.objects.create(title='Flow song', artist='Artist', musicbrainz_id='flow-song')
+        second_song = Song.objects.create(title='Other song', artist='Artist', musicbrainz_id='flow-other')
+        self.client.force_login(owner)
+        image = self.client.get(reverse('venue_qr_image', args=[venue.slug]))
+        decoded = zxingcpp.read_barcode(Image.open(BytesIO(image.content)))
+        self.assertIsNotNone(decoded)
+
+        guest = self.client_class()
+        self.assertEqual(guest.get(urlsplit(decoded.text).path, follow=True).status_code, 200)
+        search = guest.get(reverse('venue_song_search', args=[venue.slug]), {'q': 'Flow song'})
+        self.assertContains(search, reverse('venue_request_song', args=[venue.slug, first_song.pk]))
+        guest.post(reverse('venue_request_song', args=[venue.slug, first_song.pk]))
+        song_request = SongRequest.objects.get(venue_id=venue, song_id=first_song)
+        self.client.post(reverse('venue_update_request', args=[venue.slug, song_request.pk]), {'status': 'APPROVED'})
+        self.assertTrue(Queue.objects.filter(venue_id=venue, song_request_id=song_request).exists())
+
+        self.client.post(reverse('venue_request_availability', args=[venue.slug]), {'enabled': 'false'})
+        blocked = guest.post(reverse('venue_request_song', args=[venue.slug, second_song.pk]), follow=True)
+        self.assertContains(blocked, 'Song requests are currently unavailable')
+        self.assertEqual(SongRequest.objects.filter(venue_id=venue).count(), 1)
+        self.assertTrue(Queue.objects.filter(venue_id=venue, song_request_id=song_request).exists())
+
     def test_guest_request_reaches_the_staff_queue(self):
         staff = make_user('integration_staff', roles.STAFF)
         venue = Venue.objects.create(name='Integration venue')
@@ -797,8 +826,122 @@ class RequestIntegrationTests(TestCase):
 
 
 @skipUnless(connection.vendor == 'postgresql', 'Request concurrency requires PostgreSQL')
+class RequestSubmissionConcurrencyTests(TransactionTestCase):
+    def setUp(self):
+        for role in roles.ROLES:
+            Group.objects.get_or_create(name=role)
+        self.venue = Venue.objects.create(name='Concurrent requests')
+        self.songs = [Song.objects.create(title=f'Concurrent {i}', artist='Artist', musicbrainz_id=f'limit-{i}') for i in range(7)]
+
+    def guest_clients(self):
+        first = self.client_class()
+        session = first.session
+        session.save()
+        second = self.client_class()
+        second.cookies[settings.SESSION_COOKIE_NAME] = session.session_key
+        return first, second, session.session_key
+
+    def submit_together(self, submissions):
+        start = Barrier(len(submissions))
+        first_evaluation = Event()
+        both_attempted = Event()
+        release = Event()
+        counter_lock = Lock()
+        attempts = 0
+
+        def track_lock(venue):
+            nonlocal attempts
+            with counter_lock:
+                attempts += 1
+                if attempts == len(submissions):
+                    both_attempted.set()
+            return lock_venue(venue)
+
+        def pause_first(venue, song):
+            if not first_evaluation.is_set():
+                first_evaluation.set()
+                if not release.wait(10):
+                    raise TimeoutError('Concurrent requests were not released')
+            return evaluate_request(venue, song)
+
+        def submit(client, venue, song):
+            from django.db import connections
+            try:
+                start.wait(timeout=10)
+                return client.post(reverse('venue_request_song', args=[venue.slug, song.pk])).status_code
+            finally:
+                connections.close_all()
+
+        with patch('core.views.lock_venue', side_effect=track_lock), patch('core.views.evaluate_request', side_effect=pause_first):
+            with ThreadPoolExecutor(max_workers=len(submissions)) as executor:
+                futures = [executor.submit(submit, *submission) for submission in submissions]
+                try:
+                    self.assertTrue(first_evaluation.wait(10))
+                    self.assertTrue(both_attempted.wait(10))
+                finally:
+                    release.set()
+                self.assertEqual([future.result(timeout=20) for future in futures], [302] * len(submissions))
+
+    def test_simultaneous_duplicate_guest_requests_create_one_pending_request(self):
+        first, second, session_key = self.guest_clients()
+        self.submit_together([(first, self.venue, self.songs[0]), (second, self.venue, self.songs[0])])
+        requests = SongRequest.objects.filter(venue_id=self.venue, session_key=session_key, status=SongRequest.PENDING)
+        self.assertEqual(requests.count(), 1)
+        self.assertEqual(SongDecision.objects.filter(venue=self.venue).count(), 1)
+
+    def test_simultaneous_guest_requests_cannot_take_the_same_last_slot(self):
+        first, second, session_key = self.guest_clients()
+        for song in self.songs[:4]:
+            SongRequest.objects.create(venue_id=self.venue, song_id=song, session_key=session_key)
+        self.submit_together([(first, self.venue, self.songs[4]), (second, self.venue, self.songs[5])])
+        self.assertEqual(SongRequest.objects.filter(venue_id=self.venue, session_key=session_key, status=SongRequest.PENDING).count(), 5)
+        self.assertEqual(SongDecision.objects.filter(venue=self.venue).count(), 1)
+
+    def test_account_limit_applies_across_separate_sessions(self):
+        user = make_user('concurrent_customer', roles.CUSTOMER)
+        first, second = self.client_class(), self.client_class()
+        first.force_login(user)
+        second.force_login(user)
+        for song in self.songs[:4]:
+            SongRequest.objects.create(venue_id=self.venue, song_id=song, requested_by=user)
+        self.submit_together([(first, self.venue, self.songs[4]), (second, self.venue, self.songs[5])])
+        self.assertEqual(SongRequest.objects.filter(venue_id=self.venue, requested_by=user, status=SongRequest.PENDING).count(), 5)
+
+    def test_different_visitors_and_venues_do_not_share_limits(self):
+        first, _, first_key = self.guest_clients()
+        second, _, second_key = self.guest_clients()
+        other_venue = Venue.objects.create(name='Another concurrent venue')
+        self.submit_together([(first, self.venue, self.songs[0]), (second, self.venue, self.songs[0])])
+        self.assertEqual(SongRequest.objects.filter(venue_id=self.venue, session_key__in=[first_key, second_key]).count(), 2)
+        self.assertEqual(first.post(reverse('venue_request_song', args=[other_venue.slug, self.songs[0].pk])).status_code, 302)
+        self.assertTrue(SongRequest.objects.filter(venue_id=other_venue, session_key=first_key).exists())
+
+    def test_same_guest_can_request_the_same_song_at_two_venues(self):
+        first, second, session_key = self.guest_clients()
+        other_venue = Venue.objects.create(name='Independent venue')
+        self.submit_together([(first, self.venue, self.songs[0]), (second, other_venue, self.songs[0])])
+        self.assertEqual(SongRequest.objects.filter(session_key=session_key, song_id=self.songs[0]).count(), 2)
+
+    def test_disabled_requests_create_no_partial_records(self):
+        self.venue.requests_enabled = False
+        self.venue.save(update_fields=['requests_enabled'])
+        self.client.post(reverse('venue_request_song', args=[self.venue.slug, self.songs[0].pk]))
+        self.assertFalse(SongRequest.objects.filter(venue_id=self.venue).exists())
+        self.assertFalse(SongDecision.objects.filter(venue=self.venue).exists())
+
+    def test_failed_decision_recording_rolls_back_the_request(self):
+        with patch('core.views.record_decision', side_effect=RuntimeError('test failure')):
+            with self.assertRaises(RuntimeError):
+                self.client.post(reverse('venue_request_song', args=[self.venue.slug, self.songs[0].pk]))
+        self.assertFalse(SongRequest.objects.filter(venue_id=self.venue).exists())
+        self.assertFalse(SongDecision.objects.filter(venue=self.venue).exists())
+
+
+@skipUnless(connection.vendor == 'postgresql', 'Request concurrency requires PostgreSQL')
 class AvailabilityConcurrencyTests(TransactionTestCase):
     def test_disable_waits_for_in_progress_request(self):
+        for role in roles.ROLES:
+            Group.objects.get_or_create(name=role)
         owner = make_user('concurrent_owner', roles.OWNER)
         venue = Venue.objects.create(name='Concurrent availability', owner=owner)
         song = Song.objects.create(title='Concurrent song', artist='Artist', musicbrainz_id='concurrent-availability')

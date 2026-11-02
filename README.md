@@ -62,6 +62,8 @@ Unknown values follow the venue's policy, which defaults to staff review.
 Owners and assigned staff can enable or disable new song requests from the
 venue dashboard. Existing venues start enabled after migration. Disabling new
 requests does not remove existing requests or queue entries.
+Request submission uses the venue's database lock to enforce the existing
+duplicate and five-pending-request limits during concurrent submissions.
 
 Staff can approve requests into the venue queue, move entries within a priority,
 change priority, remove entries, and mark them played. Higher priority is listed
