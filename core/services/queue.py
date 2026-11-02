@@ -1,16 +1,13 @@
 from django.db import transaction
 from django.db.models import Max
 
-from core.models import Queue, SongDecision, SongRequest, Venue
-
-
-def _lock_venue(venue):
-    Venue.objects.select_for_update().get(pk=venue.pk)
+from core.models import Queue, SongDecision, SongRequest
+from core.services.venue import lock_venue
 
 
 @transaction.atomic
 def update_request_status(venue, request_id, new_status):
-    _lock_venue(venue)
+    lock_venue(venue)
     song_request = SongRequest.objects.select_for_update().get(pk=request_id, venue_id=venue)
     allowed = {
         SongRequest.PENDING: {SongRequest.APPROVED, SongRequest.REJECTED},
@@ -35,7 +32,7 @@ def update_request_status(venue, request_id, new_status):
 def move_queue_entry(venue, entry_id, direction):
     if direction not in ('up', 'down'):
         raise ValueError('Invalid direction.')
-    _lock_venue(venue)
+    lock_venue(venue)
     entry = Queue.objects.get(pk=entry_id, venue_id=venue)
     peers = list(Queue.objects.filter(venue_id=venue, priority=entry.priority).order_by('position', 'pk'))
     index = next(i for i, item in enumerate(peers) if item.pk == entry.pk)
@@ -56,7 +53,7 @@ def move_queue_entry(venue, entry_id, direction):
 def set_queue_priority(venue, entry_id, priority):
     if not -10 <= priority <= 10:
         raise ValueError('Priority must be between -10 and 10.')
-    _lock_venue(venue)
+    lock_venue(venue)
     entry = Queue.objects.get(pk=entry_id, venue_id=venue)
     entry.priority = priority
     entry.save(update_fields=['priority'])

@@ -23,7 +23,7 @@ class VenueBlacklistInline(admin.TabularInline):
 
 @admin.register(Venue)
 class VenueAdmin(admin.ModelAdmin):
-    list_display = ("name", "slug", "owner")
+    list_display = ("name", "slug", "owner", "requests_enabled")
     filter_horizontal = ("staff",)
     inlines = (VenueConfigInline, VenueGenreInline, VenueBlacklistInline)
 
