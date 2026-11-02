@@ -43,14 +43,14 @@
     </article>
   </div>
 </section>
-<section class="panel">
+<section class="panel venue-picker" id="venues">
   <h2>Choose a venue</h2>
-  {% comment %}
+  <p>Choose a venue to request songs. An account is optional for guests.</p>
   {% for venue in venues %}
-  <p><a href="{% url 'select_venue' venue.slug %}">{{ venue.name }}</a></p>
+  <p><a class="btn btn-secondary" href="{% url 'select_venue' venue.slug %}">{{ venue.name }}</a></p>
   {% empty %}
   <p>No venues are available yet.</p>
+  {% if user.is_staff %}<p><a href="{% url 'admin:core_venue_add' %}">Add a venue in admin</a></p>{% endif %}
   {% endfor %}
-  {% endcomment %}
 </section>
 {% endblock %}

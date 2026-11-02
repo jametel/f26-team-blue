@@ -149,6 +149,76 @@ class AccessControlTests(TestCase):
         self.assertNotIn(reverse("owner_dashboard"), html)
 
 
+class NavigationTests(TestCase):
+    def test_home_lists_venues_and_guest_can_open_requests(self):
+        venue = Venue.objects.create(name='Navigation venue')
+        home = self.client.get(reverse('home'))
+        self.assertContains(home, reverse('select_venue', args=[venue.slug]))
+        self.assertContains(home, 'An account is optional')
+        self.client.get(reverse('select_venue', args=[venue.slug]))
+        search = self.client.get(reverse('venue_song_search', args=[venue.slug]))
+        self.assertContains(search, reverse('venue_customer_dashboard', args=[venue.slug]))
+        self.assertEqual(self.client.get(reverse('venue_customer_dashboard', args=[venue.slug])).status_code, 200)
+
+    def test_account_button_routes_users_to_their_dashboard(self):
+        owner = make_user('nav_owner', roles.OWNER)
+        staff = make_user('nav_staff', roles.STAFF)
+        customer = make_user('nav_customer', roles.CUSTOMER)
+        venue = Venue.objects.create(name='Team venue', owner=owner)
+        venue.staff.add(staff)
+        for user, target in ((owner, 'owner_dashboard'), (staff, 'staff_dashboard'),
+                             (customer, 'customer_dashboard')):
+            with self.subTest(user=user.username):
+                self.client.force_login(user)
+                choose_venue(self.client, venue)
+                home = self.client.get(reverse('home'))
+                self.assertContains(home, f'href="{reverse("dashboard")}"')
+                self.assertContains(home, f'Logged in as {user.username}')
+                self.assertRedirects(self.client.get(reverse('dashboard')), reverse(target))
+                self.client.logout()
+
+    def test_admin_link_and_no_venue_prompt(self):
+        admin = User.objects.create_superuser('nav_admin', password=PASSWORD)
+        self.client.force_login(admin)
+        home = self.client.get(reverse('home'))
+        self.assertContains(home, reverse('admin:index'))
+        self.assertContains(home, reverse('admin:core_venue_add'))
+        response = self.client.get(reverse('dashboard'), follow=True)
+        self.assertContains(response, 'Choose a venue')
+        self.assertContains(response, 'Your account')
+        self.assertContains(response, reverse('admin:core_venue_add'))
+        venue = Venue.objects.create(name='Admin venue', owner=admin)
+        response = self.client.get(reverse('venue_owner_dashboard', args=[venue.slug]))
+        self.assertContains(response, reverse('admin:core_venue_change', args=[venue.pk]))
+
+    def test_account_venue_picker_opens_the_correct_dashboard(self):
+        owner = make_user('picker_owner', roles.OWNER)
+        venue = Venue.objects.create(name='Owner venue', owner=owner)
+        other = Venue.objects.create(name='Other venue')
+        self.client.force_login(owner)
+        page = self.client.get(reverse('dashboard'))
+        self.assertContains(page, reverse('select_dashboard_venue', args=[venue.slug]))
+        self.assertNotContains(page, reverse('select_dashboard_venue', args=[other.slug]))
+        self.assertEqual(self.client.get(reverse('select_dashboard_venue', args=[other.slug])).status_code, 403)
+        response = self.client.get(reverse('select_dashboard_venue', args=[venue.slug]), follow=True)
+        self.assertContains(response, 'Owner Dashboard')
+
+    def test_customer_can_choose_venue_from_account_page(self):
+        customer = make_user('picker_customer', roles.CUSTOMER)
+        venue = Venue.objects.create(name='Customer venue')
+        self.client.force_login(customer)
+        response = self.client.get(reverse('select_dashboard_venue', args=[venue.slug]), follow=True)
+        self.assertContains(response, 'My Song Requests')
+
+    def test_staff_account_with_unmanaged_venue_is_sent_to_venue_picker(self):
+        staff = make_user('other_nav_staff', roles.STAFF)
+        self.client.force_login(staff)
+        choose_venue(self.client, Venue.objects.create(name='Unmanaged venue'))
+        response = self.client.get(reverse('dashboard'), follow=True)
+        self.assertContains(response, 'Choose a venue you manage')
+        self.assertNotContains(response, 'Staff Dashboard')
+
+
 class RequestFlowTests(TestCase):
     def setUp(self):
         self.song = Song.objects.create(title="Song A", artist="Artist", musicbrainz_id="mb-1")
@@ -511,6 +581,20 @@ class QueueTests(TestCase):
 
 
 class SearchReliabilityTests(TestCase):
+    @patch('core.views.MusicBrainzClient.search_songs')
+    def test_search_by_artist_uses_local_cache(self, search):
+        Song.objects.create(title='A song', artist='A unique artist', musicbrainz_id='artist-cached')
+        response = self.client.get(reverse('song_search'), {'q': 'unique artist'})
+        self.assertContains(response, 'A song')
+        search.assert_not_called()
+
+    @patch('core.views.MusicBrainzClient.search_songs')
+    def test_provider_results_are_shown_even_if_query_is_not_in_title(self, search):
+        search.return_value = [{'name': 'Song', 'artist': {'name': 'Artist'}, 'musicbrainz_id': 'provider-match'}]
+        response = self.client.get(reverse('song_search'), {'q': 'a provider match'})
+        self.assertContains(response, 'Song')
+        self.assertTrue(Song.objects.filter(musicbrainz_id='provider-match').exists())
+
     @patch('core.services.musicbrainz.requests.get', side_effect=requests.Timeout())
     def test_timeout_is_reported_as_provider_error(self, get):
         with self.assertRaises(MusicBrainzError):
@@ -562,6 +646,7 @@ class RequestIntegrationTests(TestCase):
         self.client.get(reverse('select_venue', args=[venue.slug]))
         search = self.client.get(reverse('venue_song_search', args=[venue.slug]), {'q': 'Integration'})
         self.assertContains(search, 'Integration song')
+        self.assertContains(search, reverse('venue_request_song', args=[venue.slug, song.pk]))
         self.client.post(reverse('venue_request_song', args=[venue.slug, song.pk]))
         song_request = SongRequest.objects.get(venue_id=venue)
         self.assertEqual(song_request.decisions.get().outcome, SongDecision.Outcome.ACCEPT)
