@@ -12,6 +12,7 @@ from threading import Barrier, Event, Lock
 from unittest import skipUnless
 from unittest.mock import patch
 from io import BytesIO
+from urllib.parse import urlsplit
 import requests
 from PIL import Image
 
@@ -770,6 +771,33 @@ class SearchReliabilityTests(TestCase):
 
 
 class RequestIntegrationTests(TestCase):
+    @override_settings(PUBLIC_BASE_URL='https://music.example.test')
+    @skipUnless(zxingcpp is not None, 'Install requirements-test.txt to decode QR codes')
+    def test_guest_flow_from_qr_to_queue_and_disabled_requests(self):
+        owner = make_user('flow_owner', roles.OWNER)
+        venue = Venue.objects.create(name='Flow venue', owner=owner)
+        first_song = Song.objects.create(title='Flow song', artist='Artist', musicbrainz_id='flow-song')
+        second_song = Song.objects.create(title='Other song', artist='Artist', musicbrainz_id='flow-other')
+        self.client.force_login(owner)
+        image = self.client.get(reverse('venue_qr_image', args=[venue.slug]))
+        decoded = zxingcpp.read_barcode(Image.open(BytesIO(image.content)))
+        self.assertIsNotNone(decoded)
+
+        guest = self.client_class()
+        self.assertEqual(guest.get(urlsplit(decoded.text).path, follow=True).status_code, 200)
+        search = guest.get(reverse('venue_song_search', args=[venue.slug]), {'q': 'Flow song'})
+        self.assertContains(search, reverse('venue_request_song', args=[venue.slug, first_song.pk]))
+        guest.post(reverse('venue_request_song', args=[venue.slug, first_song.pk]))
+        song_request = SongRequest.objects.get(venue_id=venue, song_id=first_song)
+        self.client.post(reverse('venue_update_request', args=[venue.slug, song_request.pk]), {'status': 'APPROVED'})
+        self.assertTrue(Queue.objects.filter(venue_id=venue, song_request_id=song_request).exists())
+
+        self.client.post(reverse('venue_request_availability', args=[venue.slug]), {'enabled': 'false'})
+        blocked = guest.post(reverse('venue_request_song', args=[venue.slug, second_song.pk]), follow=True)
+        self.assertContains(blocked, 'Song requests are currently unavailable')
+        self.assertEqual(SongRequest.objects.filter(venue_id=venue).count(), 1)
+        self.assertTrue(Queue.objects.filter(venue_id=venue, song_request_id=song_request).exists())
+
     def test_guest_request_reaches_the_staff_queue(self):
         staff = make_user('integration_staff', roles.STAFF)
         venue = Venue.objects.create(name='Integration venue')
