@@ -33,6 +33,23 @@ staff review.
 Each venue's public entry URL is `/venues/<slug>/`. Staff and owners select a
 venue before opening its dashboard. Assign owners and staff in Django admin.
 
+## Venue QR codes
+
+Set `PUBLIC_BASE_URL` in `.env` to the HTTP or HTTPS origin that guests can
+reach, including the port when needed, for example `http://192.168.1.10:8901`.
+Do not include a path or credentials. For a network address, add the hostname
+or IP address to the comma-separated `ALLOWED_HOSTS` setting in `.env` and
+make sure the phone and server can communicate. `localhost` on a phone means
+the phone itself, not the computer running Django. Restart the web service
+after changing its environment.
+
+Owners and venue staff can open and download a QR code from their dashboard.
+Changing the public address or venue slug requires printing a new code. The
+QR code opens the venue's guest search page and does not require an account.
+
+For all automated tests, including independent QR decoding, install
+`requirements-test.txt` and run `python manage.py test` against PostgreSQL.
+
 Song metadata is stored in `SongFeatures`. Values migrated from the old Song
 fields are marked `legacy-unverified` because their original source is unknown.
 `core.services.song_features` provides cache lookup and a refresh interface for

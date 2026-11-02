@@ -2,9 +2,10 @@ from django.contrib import messages
 from django.contrib.auth import get_user_model, login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
+from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 from django.db.models import Count, Prefetch, Q
-from django.http import Http404, HttpResponseForbidden
+from django.http import Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
@@ -14,6 +15,7 @@ from core.models import Queue, Song, SongDecision, SongRequest, UserProfile, Ven
 from core.services.musicbrainz import MusicBrainzClient, MusicBrainzError
 from core.services.queue import move_queue_entry, set_queue_priority, update_request_status
 from core.services.vibe_engine import evaluate_request, record_decision
+from core.services.venue_qr import venue_public_url, venue_qr_png
 from core.venue_context import current_venue
 
 
@@ -24,6 +26,33 @@ def home(request):
 def select_venue(request, venue_slug):
     venue = current_venue(request, venue_slug)
     return redirect('venue_song_search', venue_slug=venue.slug)
+
+
+@role_required([roles.STAFF, roles.OWNER])
+def venue_qr(request, venue_slug):
+    venue = get_object_or_404(Venue, slug=venue_slug)
+    if not roles.can_manage_venue(request.user, venue):
+        return HttpResponseForbidden('You cannot manage this venue.')
+    try:
+        public_url = venue_public_url(venue)
+    except ImproperlyConfigured as error:
+        return render(request, 'core/venue_qr.html', {'venue': venue, 'configuration_error': str(error)})
+    return render(request, 'core/venue_qr.html', {'venue': venue, 'public_url': public_url})
+
+
+@role_required([roles.STAFF, roles.OWNER])
+def venue_qr_image(request, venue_slug):
+    venue = get_object_or_404(Venue, slug=venue_slug)
+    if not roles.can_manage_venue(request.user, venue):
+        return HttpResponseForbidden('You cannot manage this venue.')
+    try:
+        image = venue_qr_png(venue)
+    except ImproperlyConfigured:
+        return HttpResponse('Venue QR code is not configured.', status=503, content_type='text/plain')
+    response = HttpResponse(image, content_type='image/png')
+    if request.GET.get('download') == '1':
+        response['Content-Disposition'] = f'attachment; filename="{venue.slug}-qr.png"'
+    return response
 
 
 def _song_to_result(song):
