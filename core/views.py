@@ -57,16 +57,6 @@ def venue_qr_image(request, venue_slug):
 
 
 def _song_to_result(song):
-    """Convert a persisted Song into the shape the template expects."""
-    return {
-        "id": song.id,
-        "name": song.title,
-        "artist": {"name": song.artist},
-        "musicbrainz_id": song.musicbrainz_id,
-    }
-
-
-def _song_to_result(song):
     return {
         "id": song.id,
         "title": song.title,
