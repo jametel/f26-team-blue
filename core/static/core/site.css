@@ -8,15 +8,33 @@
     --green: #a4e566;
     --orange: #f5a55b;
     --line: #30433a;
-    --radius: 22px
+    --radius: 22px;
+
+    --nav-button-text: #eaffdb;
+    --nav-button-background: #264333;
+    --nav-button-border: #456a50;
+    --status-pill-border: #587648;
+    --status-pill-background: #324b2e;
+    --status-pill-text: #d4f1ad;
+    --metric-background: #1c3026;
+    --metric-border: #385044;
+    --hero-note-text: #93a99e;
+    --td-border-top: #34483b;
+    --td-text: #cbd8d0;
+    --btn-primary-text: #16261a;
+    --message-list-li-border: #45654b;
+    --message-list-li-background: #243d2d;
+    --song-icon-text: #e3f1b3;
+    --bottom-tag: #ffd3a1;
+    --site-header-background: #0c1714d9;
 }
 
 * {
-    box-sizing: border-box
+    box-sizing: border-box;
 }
 
 html {
-    scroll-behavior: smooth
+    scroll-behavior: smooth;
 }
 
 body {
@@ -25,7 +43,7 @@ body {
     background: radial-gradient(ellipse 60% 35% at 80% 0%, #213c2c 0%, transparent 75%), var(--bg);
     color: var(--text);
     font-family: 'DM Sans', system-ui, sans-serif;
-    line-height: 1.55
+    line-height: 1.55;
 }
 
 a {
@@ -49,7 +67,7 @@ form {  /* override user agent stylesheet */
 
 .site-header {
     border-bottom: 1px solid rgba(255, 255, 255, .09);
-    background: #0c1714d9;
+    background: var(--site-header-background);
     backdrop-filter: blur(14px);
     position: sticky;
     top: 0;
@@ -109,9 +127,9 @@ form {  /* override user agent stylesheet */
 .nav-button {
     display: inline-block;
     padding: 10px 17px;
-    background: #264333;
-    color: #eaffdb;
-    border: 1px solid #456a50;
+    background: var(--nav-button-background);
+    color: var(--nav-button-text);
+    border: 1px solid var(--nav-button-border);
     border-radius: 12px;
     cursor: pointer;
     font-weight: 700
@@ -200,7 +218,7 @@ form {  /* override user agent stylesheet */
 
 .btn-primary {
     background: linear-gradient(100deg, var(--green), #d6d77f);
-    color: #16261a
+    color: var(--btn-primary-text);
 }
 
 .btn-primary:hover {
@@ -214,7 +232,7 @@ form {  /* override user agent stylesheet */
 }
 
 .hero-note {
-    color: #93a99e;
+    color: var(--hero-note-text);
     font-size: 12px;
     margin-top: 27px
 }
@@ -319,7 +337,7 @@ form {  /* override user agent stylesheet */
 .bottom-tag {
     bottom: 40px;
     right: 8px;
-    color: #ffd3a1
+    color: var(--bottom-tag);
 }
 
 .features {
@@ -484,7 +502,7 @@ form {  /* override user agent stylesheet */
     background: linear-gradient(130deg, #a4e56655, #f5a55b55);
     border-radius: 12px;
     font-size: 26px;
-    color: #e3f1b3
+    color: var(--song-icon-text);
 }
 
 .song-info {
@@ -609,8 +627,8 @@ th {
 
 td {
     padding: 15px 14px;
-    border-top: 1px solid #34483b;
-    color: #cbd8d0
+    border-top: 1px solid var(--td-border-top);
+    color: var(--td-text);
 }
 
 .bold-cell {
@@ -620,11 +638,11 @@ td {
 
 .status-pill {
     display: inline-block;
-    border: 1px solid #587648;
-    background: #324b2e;
+    border: 1px solid var(--status-pill-border);
+    background: var(--status-pill-background);
     border-radius: 20px;
     padding: 5px 12px;
-    color: #d4f1ad;
+    color: var(--status-pill-text);
     font-size: 12px
 }
 
@@ -745,8 +763,8 @@ td {
 
 .message-list li {
     padding: 12px 18px;
-    background: #243d2d;
-    border: 1px solid #45654b;
+    background: var(--message-list-li-background);
+    border: 1px solid var(--message-list-li-border);
     border-radius: 12px
 }
 
@@ -809,8 +827,8 @@ td {
 
 .metric {
     padding: 18px 22px;
-    background: #1c3026;
-    border: 1px solid #385044;
+    background: var(--metric-background);
+    border: 1px solid var(--metric-border);
     border-radius: 15px;
     min-width: 120px
 }
