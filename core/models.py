@@ -7,10 +7,13 @@ from django.contrib.auth.models import User
 from django.utils.text import slugify
 
 class Song(models.Model):
-    id = models.AutoField(primary_key=True)
+    id = models.CharField(primary_key=True, max_length=36)  # MusicBrainz recording ID
     title = models.CharField(max_length=255)
     artist = models.CharField(max_length=255)
-    musicbrainz_id = models.CharField(max_length=100, unique=True)
+    genre = models.CharField(max_length=100, blank=True, default="")
+    BPM = models.IntegerField(null=True, blank=True)
+    vibe_characteristics = models.CharField(max_length=255, blank=True, default="")
+    is_explicit = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.title} — {self.artist}"

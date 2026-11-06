@@ -28,8 +28,8 @@
                 <article class="song-item">
                     <span class="song-icon" aria-hidden="true">♫</span>
                     <div class="song-info">
-                        <h3>{{ song.name }}</h3>
-                        <p>{{ song.artist.name }}</p>
+                        <h3>{{ song.title }}{% if song.is_explicit %} <span class="badge">E</span>{% endif %}</h3>
+                        <p>{{ song.artist }}{% if song.genre %} · {{ song.genre }}{% endif %}</p>
                     </div>
                     {% if venue and venue.requests_enabled and song.id %}
                         <form method="post" action="{% url 'venue_request_song' venue.slug song.id %}" class="action-form">
