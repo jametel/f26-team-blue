@@ -7,7 +7,7 @@ urlpatterns = [
     path("venues/<slug:venue_slug>/", views.select_venue, name="select_venue"),
     path("venues/<slug:venue_slug>/search/", views.song_search, name="venue_song_search"),
     path("venues/<slug:venue_slug>/my-requests/", views.customer_dashboard, name="venue_customer_dashboard"),
-    path("venues/<slug:venue_slug>/requests/new/<int:song_id>/", views.request_song, name="venue_request_song"),
+    path("venues/<slug:venue_slug>/requests/new/<str:song_id>/", views.request_song, name="venue_request_song"),
     path("venues/<slug:venue_slug>/staff/", views.staff_dashboard, name="venue_staff_dashboard"),
     path("venues/<slug:venue_slug>/owner/", views.owner_dashboard, name="venue_owner_dashboard"),
     path("venues/<slug:venue_slug>/qr/", views.venue_qr, name="venue_qr"),
@@ -39,7 +39,7 @@ urlpatterns = [
     path("owner/", views.owner_dashboard, name="owner_dashboard"),
 
     # Actions
-    path("requests/new/<int:song_id>/", views.request_song, name="request_song"),
+    path("requests/new/<str:song_id>/", views.request_song, name="request_song"),
     path("requests/<int:request_id>/status/", views.update_request, name="update_request"),
     path("owner/users/<int:user_id>/role/", views.set_user_role, name="set_user_role"),
 ]
