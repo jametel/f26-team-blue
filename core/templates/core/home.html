@@ -43,6 +43,7 @@
     </article>
   </div>
 </section>
+{% comment %}
 <section class="panel venue-picker" id="venues">
   <h2>Choose a venue</h2>
   <p>Choose a venue to request songs. An account is optional for guests.</p>
@@ -53,4 +54,5 @@
   {% if user.is_staff %}<p><a href="{% url 'admin:core_venue_add' %}">Add a venue in admin</a></p>{% endif %}
   {% endfor %}
 </section>
+{% endcomment %}
 {% endblock %}
