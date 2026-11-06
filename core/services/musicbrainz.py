@@ -37,22 +37,49 @@ class MusicBrainzClient:
             raise MusicBrainzError("Music search is temporarily unavailable") from error
 
     def _normalize(self, recordings):
-        """Flatten MusicBrainz's nested shape into what the template expects."""
         songs = []
         for rec in recordings:
             if not isinstance(rec, dict):
                 continue
-            title, recording_id = rec.get("title"), rec.get("id")
-            if not isinstance(title, str) or not title.strip() or not isinstance(recording_id, str) or not recording_id.strip():
+            recording_id, title = rec.get("id"), rec.get("title")
+            if not isinstance(recording_id, str) or not recording_id.strip():
                 continue
-            artist_credits = rec.get("artist-credit")
-            first_credit = artist_credits[0] if isinstance(artist_credits, list) and artist_credits else None
-            artist_name = first_credit.get("name") if isinstance(first_credit, dict) else None
-            if not isinstance(artist_name, str) or not artist_name.strip():
-                artist_name = "Unknown Artist"
+            if not isinstance(title, str) or not title.strip():
+                continue
             songs.append({
-                "name": title,
-                "artist": {"name": artist_name},
-                "musicbrainz_id": recording_id,
+                "id": recording_id.strip(),
+                "title": title.strip(),
+                "artist": self._artist_name(rec),
+                "genre": self._top_genre(rec),
+                "BPM": None,                   # not provided by MusicBrainz
+                "vibe_characteristics": None,  # not provided by MusicBrainz
+                "is_explicit": self._is_explicit(rec),
             })
         return songs
+
+    @staticmethod
+    def _artist_name(rec):
+        credits = rec.get("artist-credit")
+        first = credits[0] if isinstance(credits, list) and credits else None
+        name = first.get("name") if isinstance(first, dict) else None
+        if not isinstance(name, str) or not name.strip():
+            return "Unknown Artist"
+        return name.strip()
+
+    @staticmethod
+    def _top_genre(rec):
+        """Pick the most-voted tag as the genre, or None if there are no tags."""
+        tags = rec.get("tags")
+        if not isinstance(tags, list):
+            return None
+        valid = [t for t in tags if isinstance(t, dict) and isinstance(t.get("name"), str) and t["name"].strip()]
+        if not valid:
+            return None
+        best = max(valid, key=lambda t: t.get("count", 0) if isinstance(t.get("count"), int) else 0)
+        return best["name"].strip()
+
+    @staticmethod
+    def _is_explicit(rec):
+        """MusicBrainz has no explicit flag; infer from the disambiguation text."""
+        disambiguation = rec.get("disambiguation")
+        return isinstance(disambiguation, str) and "explicit" in disambiguation.lower()
