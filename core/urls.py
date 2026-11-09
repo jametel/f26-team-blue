@@ -1,6 +1,6 @@
 from django.urls import path
 from django.contrib.auth import views as auth_views
-from . import views
+from . import views, payment_views
 
 urlpatterns = [
     path("", views.home, name="home"),
@@ -42,4 +42,23 @@ urlpatterns = [
     path("requests/new/<str:song_id>/", views.request_song, name="request_song"),
     path("requests/<int:request_id>/status/", views.update_request, name="update_request"),
     path("owner/users/<int:user_id>/role/", views.set_user_role, name="set_user_role"),
+
+    #payment priority boost
+    path(
+        "venues/<slug:venue_slug>/requests/<int:request_id>/priority-checkout/",
+        payment_views.create_priority_checkout,
+        name="venue_priority_checkout"
+    ),
+
+    path(
+    "venues/<slug:venue_slug>/priority-demo/",
+    payment_views.priority_demo,
+    name="venue_priority_demo",
+),
+
+    path(
+        "payments/stripe/webhook/",
+        payment_views.stripe_webhook,
+        name="stripe_webhook",
+),
 ]

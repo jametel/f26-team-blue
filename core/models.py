@@ -195,11 +195,28 @@ class Payments(models.Model):
     user_id = models.ForeignKey(UserProfile, on_delete=models.CASCADE)
     song_request_id = models.ForeignKey(SongRequest, on_delete=models.CASCADE)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
+ # checkout session associated with payment
+    stripe_checkout_session_id = models.CharField(
+        max_length=255, 
+        unique=True, 
+        null=True, 
+        blank=True
+    )
+    # stripe transaction ID associated with payment
+    stripe_payment_intent_id = models.CharField(
+        max_length=255,
+        unique=True,
+        null=True,
+        blank=True
+    )
+
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.userID} — {self.venueID} — {self.amount}"
+        return f"Payment#{self.pk} — {self.amount} — {self.status}"
+    #to avoid an attribute error when trying to access 
+    # the payment_id attribute
 
 class Refunds(models.Model):
     REFUND_STATUS_CHOICES = [
@@ -216,7 +233,7 @@ class Refunds(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.payment_id} — {self.reason}"
+        return f"Refund#{self.pk} — {self.reason}"
 
 class Overrides(models.Model):
     id = models.AutoField(primary_key=True)
