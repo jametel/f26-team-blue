@@ -1,30 +1,34 @@
-#spotify api was select as we have yet to hear back from any of the other companies.
-#preparing the class for music streaming to be filled out later, contact Spencer to get the API and Secret.
+# spotify api was select as we have yet to hear back from any of the other companies.
+# preparing the class for music streaming to be filled out later, contact Spencer to get the API and Secret.
 
-#adjustment to prevent collision with the queue
+# adjustment to prevent collision with the queue
 import sys
 from pathlib import Path
+
 _script_dir = str(Path(__file__).resolve().parent)
 if _script_dir in sys.path:
     sys.path.remove(_script_dir)
-
 
 import os
 import time
 import base64
 import requests
-from pathlib import Path
 from dotenv import load_dotenv
 
-#pull credentials from env
+# pull credentials from env
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 env_file = BASE_DIR / ".env"
-
 load_dotenv(env_file)
+
 
 class SpotifyClient:
     TOKEN_URL = "https://accounts.spotify.com/api/token"
     API_BASE = "https://api.spotify.com/v1"
+    MB_API_BASE = "https://musicbrainz.org/ws/2"
+    MB_HEADERS = {
+        "User-Agent": "RhythmiQ/1.0.0 (contact: Shall053@odu.edu)",
+        "Accept": "application/json",
+    }
 
     def __init__(self):
         self.client_id = os.getenv("SPOTIFY_CLIENT_ID")
@@ -38,7 +42,7 @@ class SpotifyClient:
             )
 
     def _get_auth_header(self) -> dict:
-        #encode credentials for security
+        # encode credentials for security
         auth_str = f"{self.client_id}:{self.client_secret}"
         b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
         return {
@@ -47,11 +51,11 @@ class SpotifyClient:
         }
 
     def get_token(self) -> str:
-        #retrieve existing token if its valid
+        # retrieve existing token if its valid
         if self._access_token and time.time() < (self._expires_at - 60):
             return self._access_token
 
-        #establish client credentials
+        # establish client credentials
         data = {"grant_type": "client_credentials"}
         response = requests.post(
             self.TOKEN_URL,
@@ -71,7 +75,7 @@ class SpotifyClient:
         return self._access_token
 
     def _search_spotify(self, query: str) -> dict | None:
-        #search single track using the api
+        # search single track using the api
         token = self.get_token()
         headers = {"Authorization": f"Bearer {token}"}
         params = {"q": query, "type": "track", "limit": 1}
@@ -92,7 +96,7 @@ class SpotifyClient:
         return None
 
     def _lookup_mbid_isrcs(self, mbid: str) -> list[str]:
-        #fallback searching
+        # fallback searching
         try:
             res = requests.get(
                 f"{self.MB_API_BASE}/recording/{mbid.strip()}",
@@ -108,7 +112,7 @@ class SpotifyClient:
         return []
 
     def resolve_song(self, mb_song: dict) -> dict | None:
-        #accept the song info in the format of musicBrainz
+        # accept the song info in the format of musicBrainz
         if not isinstance(mb_song, dict):
             return None
 
@@ -122,25 +126,25 @@ class SpotifyClient:
 
         spotify_track = None
 
-        #search with artist info from the other method
+        # search with artist info from the other method
         if artist_name and artist_name != "Unknown Artist":
             spotify_track = self._search_spotify(f'track:"{title}" artist:"{artist_name}"')
 
-        #using the song ID
+        # using the song ID
         if not spotify_track and mbid:
             for isrc in self._lookup_mbid_isrcs(mbid):
                 spotify_track = self._search_spotify(f"isrc:{isrc}")
                 if spotify_track:
                     break
 
-        #text fallback
+        # text fallback
         if not spotify_track:
             loose_query = f"{title} {artist_name}" if artist_name != "Unknown Artist" else title
             spotify_track = self._search_spotify(loose_query)
 
         if not spotify_track:
             return None
-        
+
         return {
             **mb_song,  # Preserve original name, artist, and musicbrainz_id
             "spotify_id": spotify_track["id"],
@@ -149,15 +153,22 @@ class SpotifyClient:
             "external_url": spotify_track.get("external_urls", {}).get("spotify"),
         }
 
+    def get_track_browser_url(self, mb_song: dict) -> str | None:
+        # get the URL to play it
+        resolved = self.resolve_song(mb_song)
+        if not resolved:
+            return None
+        return resolved.get("external_url")
 
 
-
-#run directly to test
+# run directly to test
 if __name__ == "__main__":
+    import webbrowser
+
     client = SpotifyClient()
     print("=== MusicBrainz Payload -> Spotify Resolver Test ===")
 
-    # Exact shape returned by your teammate's _normalize() method
+    # Exact shape returned by your  method
     mock_selection = {
         "name": "Never Gonna Give You Up",
         "artist": {"name": "Rick Astley"},
@@ -168,11 +179,14 @@ if __name__ == "__main__":
     resolved = client.resolve_song(mock_selection)
 
     if resolved:
-        print("Matched ")
+        print("Matched")
         print(f"  • Title:          {resolved['name']}")
         print(f"  • Artist:         {resolved['artist']['name']}")
         print(f"  • MusicBrainz ID: {resolved['musicbrainz_id']}")
         print(f"  • Spotify URI:    {resolved['spotify_uri']}")
         print(f"  • Spotify Link:   {resolved['external_url']}")
+
+        if resolved.get("external_url"):
+            webbrowser.open(resolved["external_url"])
     else:
-        print("❌ Could not resolve song on Spotify.")
+        print("Could not resolve song.")
