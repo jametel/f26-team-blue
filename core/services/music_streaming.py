@@ -70,17 +70,109 @@ class SpotifyClient:
         self._expires_at = time.time() + payload.get("expires_in", 3600)
         return self._access_token
 
+    def _search_spotify(self, query: str) -> dict | None:
+        #search single track using the api
+        token = self.get_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        params = {"q": query, "type": "track", "limit": 1}
+
+        try:
+            res = requests.get(
+                f"{self.API_BASE}/search",
+                headers=headers,
+                params=params,
+                timeout=10,
+            )
+            if res.status_code == 200:
+                items = res.json().get("tracks", {}).get("items", [])
+                return items[0] if items else None
+        except requests.RequestException as e:
+            print(f"Spotify Network Error: {e}")
+
+        return None
+
+    def _lookup_mbid_isrcs(self, mbid: str) -> list[str]:
+        #fallback searching
+        try:
+            res = requests.get(
+                f"{self.MB_API_BASE}/recording/{mbid.strip()}",
+                headers=self.MB_HEADERS,
+                params={"inc": "isrcs", "fmt": "json"},
+                timeout=5,
+            )
+            if res.status_code == 200:
+                return res.json().get("isrcs", [])
+        except requests.RequestException as e:
+            print(f"[MusicBrainz Fallback Error]: {e}")
+
+        return []
+
+    def resolve_song(self, mb_song: dict) -> dict | None:
+        #accept the song info in the format of musicBrainz
+        if not isinstance(mb_song, dict):
+            return None
+
+        title = mb_song.get("name", "").strip()
+        artist_obj = mb_song.get("artist") or {}
+        artist_name = artist_obj.get("name", "").strip()
+        mbid = mb_song.get("musicbrainz_id", "").strip()
+
+        if not title:
+            return None
+
+        spotify_track = None
+
+        #search with artist info from the other method
+        if artist_name and artist_name != "Unknown Artist":
+            spotify_track = self._search_spotify(f'track:"{title}" artist:"{artist_name}"')
+
+        #using the song ID
+        if not spotify_track and mbid:
+            for isrc in self._lookup_mbid_isrcs(mbid):
+                spotify_track = self._search_spotify(f"isrc:{isrc}")
+                if spotify_track:
+                    break
+
+        #text fallback
+        if not spotify_track:
+            loose_query = f"{title} {artist_name}" if artist_name != "Unknown Artist" else title
+            spotify_track = self._search_spotify(loose_query)
+
+        if not spotify_track:
+            return None
+        
+        return {
+            **mb_song,  # Preserve original name, artist, and musicbrainz_id
+            "spotify_id": spotify_track["id"],
+            "spotify_uri": spotify_track["uri"],
+            "duration_ms": spotify_track.get("duration_ms"),
+            "external_url": spotify_track.get("external_urls", {}).get("spotify"),
+        }
 
 
 
 
 #run directly to test
 if __name__ == "__main__":
-    print("Testing Spotify ")
-    try:
-        client = SpotifyClient()
-        token = client.get_token()
-        print(f"Auth Handshake: SUCCESS")
-        print("Connected to Spotify successfully.")
-    except Exception as e:
-        print(f"Connection Failed: {e}")
+    client = SpotifyClient()
+    print("=== MusicBrainz Payload -> Spotify Resolver Test ===")
+
+    # Exact shape returned by your teammate's _normalize() method
+    mock_selection = {
+        "name": "Never Gonna Give You Up",
+        "artist": {"name": "Rick Astley"},
+        "musicbrainz_id": "2c8d3072-7325-443d-b98d-7d989b1031e4",
+    }
+
+    print(f"Input payload: {mock_selection}\n")
+    resolved = client.resolve_song(mock_selection)
+
+    if resolved:
+        print("Matched ")
+        print(f"  • Title:          {resolved['name']}")
+        print(f"  • Artist:         {resolved['artist']['name']}")
+        print(f"  • MusicBrainz ID: {resolved['musicbrainz_id']}")
+        print(f"  • Spotify URI:    {resolved['spotify_uri']}")
+        print(f"  • Spotify Link:   {resolved['external_url']}")
+    else:
+        print("❌ Could not resolve song on Spotify.")
