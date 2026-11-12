@@ -1,0 +1,191 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>RhytmiQ Payment Test</title>
+</head>
+<body>
+    <h1>RhytmiQ — Priority Payment Test</h1>
+
+    <p>Venue: {{ venue.name }}</p>
+    <p>TEST MODE ONLY — No real money is charged.</p>
+    <p>
+        This demo verifies payment processing.
+        Queue priority changes are not yet enabled.
+    </p>
+
+    {% for item in song_requests %}
+        <p>{{ item.song_id }}</p>
+
+        <form method="post"
+              action="{% url 'venue_priority_checkout' venue.slug item.pk %}">
+            {% csrf_token %}
+            <button type="submit">
+                Test $1.00 Priority Checkout
+            </button>
+        </form>
+    {% empty %}
+        <p>
+            No eligible songs yet. Log in as a customer,
+            request a song, and have staff approve it.
+        </p>
+    {% endfor %}
+</body>
+</html>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>RhytmiQ Payment Demo</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+            padding: 40px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: auto;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+        }
+
+        button {
+            background: #635bff;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+
+        <h1>RhytmiQ Payment Demo</h1>
+
+        <h2>{{ venue.name }}</h2>
+
+        <p>
+            Stripe Test Mode — No real money charged.
+        </p>
+
+        <hr>
+
+        <h3>Approved Song Requests</h3>
+
+        {% for song_request in eligible_requests %}
+
+            <p>
+                <strong>
+                    {{ song_request.song_id.title }}
+                </strong>
+                —
+                {{ song_request.song_id.artist }}
+            </p>
+
+            <p>Request #{{ song_request.pk }}</p>
+
+            <form method="post"
+                  action="{% url 'venue_priority_checkout' venue.slug song_request.pk %}">
+
+                {% csrf_token %}
+
+                <button type="submit">
+                    Test $1.00 Priority Checkout
+                </button>
+
+            </form>
+
+            <hr>
+
+        {% empty %}
+
+            <p>
+                No approved songs available for payment.
+            </p>
+
+        {% endfor %}
+
+        <p>
+            Payment testing only.
+            Queue priority updates are not enabled yet.
+        </p>
+
+    </div>
+</body>
+</html>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>RhytmiQ Payment Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+            padding: 40px;
+        }
+
+        .container {
+            max-width: 650px;
+            margin: auto;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+        }
+
+        button {
+            background: #635bff;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>RhytmiQ Payment Demo</h1>
+        <h2>{{ venue.name }}</h2>
+
+        <p>Logged in as: {{ request.user.username }}</p>
+        <p>TEST MODE ONLY — No real money charged.</p>
+
+        <hr>
+
+        <h3>Approved Song Requests</h3>
+
+        {% for song_request in eligible_requests %}
+            <p>
+                <strong>{{ song_request.song_id.title }}</strong>
+                — {{ song_request.song_id.artist }}
+            </p>
+
+            <p>Request #{{ song_request.pk }}</p>
+
+            <form method="post"
+                  action="{% url 'venue_priority_checkout' venue.slug song_request.pk %}">
+                {% csrf_token %}
+                <button type="submit">
+                    Test $1.00 Priority Checkout
+                </button>
+            </form>
+            <hr>
+        {% empty %}
+            <p>No approved songs available for payment.</p>
+        {% endfor %}
+
+        <p>Payment demonstration only. Queue priority updates are not enabled yet.</p>
+    </div>
+</body>
+</html>

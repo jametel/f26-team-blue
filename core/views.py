@@ -57,12 +57,12 @@ def venue_qr_image(request, venue_slug):
 
 
 def _song_to_result(song):
-    """Convert a persisted Song into the shape the template expects."""
     return {
         "id": song.id,
-        "name": song.title,
-        "artist": {"name": song.artist},
-        "musicbrainz_id": song.musicbrainz_id,
+        "title": song.title,
+        "artist": song.artist,
+        "genre": song.genre,
+        "is_explicit": song.is_explicit,
     }
 
 
@@ -86,15 +86,17 @@ def song_search(request, venue_slug=None):
             found = []
             seen_ids = set()
             for item in songs:
-                mb_id = item.get("musicbrainz_id", "")
+                mb_id = item.get("id")
                 if not mb_id or mb_id in seen_ids:
                     continue
                 seen_ids.add(mb_id)
-                song, _ = Song.objects.update_or_create(
-                    musicbrainz_id=mb_id,
+                song, _ = Song.objects.get_or_create(
+                    id=mb_id,
                     defaults={
-                        "title": item["name"],
-                        "artist": item["artist"]["name"],
+                        "title": item["title"],
+                        "artist": item["artist"],
+                        "genre": item["genre"] or "",
+                        "is_explicit": item["is_explicit"],
                     },
                 )
                 found.append(song)
