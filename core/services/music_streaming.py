@@ -112,41 +112,49 @@ class SpotifyClient:
         return []
 
     def resolve_song(self, mb_song: dict) -> dict | None:
-        # accept the song info in the format of musicBrainz
+        # accept the song info
         if not isinstance(mb_song, dict):
             return None
 
-        title = mb_song.get("name", "").strip()
-        artist_obj = mb_song.get("artist") or {}
-        artist_name = artist_obj.get("name", "").strip()
-        mbid = mb_song.get("musicbrainz_id", "").strip()
+        # Support keys ("title", "artist", "id") with fallback 
+        title = (mb_song.get("title") or mb_song.get("name") or "").strip()
+
+        raw_artist = mb_song.get("artist")
+        if isinstance(raw_artist, dict):
+            artist_name = raw_artist.get("name", "").strip()
+        elif isinstance(raw_artist, str):
+            artist_name = raw_artist.strip()
+        else:
+            artist_name = ""
+
+        mbid = (mb_song.get("id") or mb_song.get("musicbrainz_id") or "").strip()
 
         if not title:
             return None
 
         spotify_track = None
 
-        # search with artist info from the other method
+        # search with artist info 
         if artist_name and artist_name != "Unknown Artist":
             spotify_track = self._search_spotify(f'track:"{title}" artist:"{artist_name}"')
 
-        # using the song ID
+        # fallback using the recording UUID 
         if not spotify_track and mbid:
             for isrc in self._lookup_mbid_isrcs(mbid):
                 spotify_track = self._search_spotify(f"isrc:{isrc}")
                 if spotify_track:
                     break
 
-        # text fallback
+        # loose text fallback
         if not spotify_track:
-            loose_query = f"{title} {artist_name}" if artist_name != "Unknown Artist" else title
+            loose_query = f"{title} {artist_name}" if artist_name and artist_name != "Unknown Artist" else title
             spotify_track = self._search_spotify(loose_query)
 
         if not spotify_track:
             return None
 
         return {
-            **mb_song,  # Preserve original name, artist, and musicbrainz_id
+            **mb_song,  # Preserves id, title, artist, genre, BPM, vibe_characteristics, is_explicit
             "spotify_id": spotify_track["id"],
             "spotify_uri": spotify_track["uri"],
             "duration_ms": spotify_track.get("duration_ms"),
