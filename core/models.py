@@ -13,6 +13,7 @@ class Song(models.Model):
     genre = models.CharField(max_length=100, blank=True, default="")
     BPM = models.IntegerField(null=True, blank=True)
     vibe_characteristics = models.CharField(max_length=255, blank=True, default="")
+    recording_details = models.CharField(max_length=255, blank=True, default="")
     is_explicit = models.BooleanField(default=False)
 
     def __str__(self):

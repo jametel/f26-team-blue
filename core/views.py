@@ -59,8 +59,10 @@ def venue_qr_image(request, venue_slug):
 def _song_to_result(song):
     return {
         "id": song.id,
+        "legacy_id": str(song.id).isdigit(),
         "title": song.title,
         "artist": song.artist,
+        "recording_details": song.recording_details,
         "genre": song.genre,
         "is_explicit": song.is_explicit,
     }
@@ -76,18 +78,26 @@ def song_search(request, venue_slug=None):
         matches = Song.objects.all()
         for term in query.split():
             matches = matches.filter(Q(title__icontains=term) | Q(artist__icontains=term))
-        local = matches.order_by("-id")[:10]
-        if not local.exists():
+        local = list(matches.order_by("-id")[:10])
+        # The optional second search fills gaps without hiding cached results.
+        if not local or request.GET.get("more") == "1":
             try:
                 songs = MusicBrainzClient().search_songs(query)
             except MusicBrainzError:
                 songs = []
                 search_error = True
-            found = []
-            seen_ids = set()
+            seen_ids = {song.pk for song in local}
+            cached_by_id = {song.pk: song for song in local}
             for item in songs:
                 mb_id = item.get("id")
-                if not mb_id or mb_id in seen_ids:
+                if not mb_id:
+                    continue
+                if mb_id in seen_ids:
+                    cached = cached_by_id.get(mb_id)
+                    details = item.get("recording_details", "")
+                    if cached and details and not cached.recording_details:
+                        cached.recording_details = details
+                        cached.save(update_fields=["recording_details"])
                     continue
                 seen_ids.add(mb_id)
                 song, _ = Song.objects.get_or_create(
@@ -96,17 +106,25 @@ def song_search(request, venue_slug=None):
                         "title": item["title"],
                         "artist": item["artist"],
                         "genre": item["genre"] or "",
+                        "recording_details": item.get("recording_details", ""),
                         "is_explicit": item["is_explicit"],
                     },
                 )
-                found.append(song)
-            local = found
+                local.append(song)
         results = [_song_to_result(s) for s in local]
+        counts = {}
+        for item in results:
+            key = (item["title"].casefold(), item["artist"].casefold())
+            counts[key] = counts.get(key, 0) + 1
+        for item in results:
+            key = (item["title"].casefold(), item["artist"].casefold())
+            item["show_recording_id"] = counts[key] > 1
     return render(request, "core/song_search.html", {
         "query": query,
         "results": results,
         "venue": venue,
         "search_error": search_error,
+        "searched_provider": request.GET.get("more") == "1",
     })
 
 

@@ -608,6 +608,11 @@ class VibeEngineTests(TestCase):
         self.assertEqual(result.outcome, 'REJECT')
         self.assertEqual(set(result.reasons), {'explicit_unknown', 'genre_unknown', 'bpm_unknown'})
 
+    def test_unverified_provider_values_are_unknown(self):
+        self.features.source = 'unverified-provider'
+        self.features.save()
+        self.assertEqual(evaluate_request(self.venue, self.song).outcome, 'REVIEW')
+
     def test_legacy_features_are_not_treated_as_verified(self):
         self.features.source = 'legacy-unverified'
         self.features.save()
@@ -695,6 +700,44 @@ class QueueTests(TestCase):
 
 
 class SearchReliabilityTests(TestCase):
+    def test_matching_titles_show_distinct_recording_ids(self):
+        Song.objects.create(id='recording-one', title='Happier', artist='Guster')
+        Song.objects.create(id='recording-two', title='Happier', artist='Guster')
+        response = self.client.get(reverse('song_search'), {'q': 'Happier'})
+        self.assertContains(response, 'MusicBrainz recording: recording-one')
+        self.assertContains(response, 'MusicBrainz recording: recording-two')
+
+    def test_legacy_numeric_ids_are_not_labeled_as_musicbrainz_ids(self):
+        Song.objects.create(id='75', title='Happier', artist='Guster')
+        Song.objects.create(id='76', title='Happier', artist='Guster')
+        response = self.client.get(reverse('song_search'), {'q': 'Happier'})
+        self.assertContains(response, 'Local song ID: 75')
+        self.assertNotContains(response, 'MusicBrainz recording: 75')
+
+    @patch('core.views.MusicBrainzClient.search_songs')
+    def test_search_more_combines_cached_and_provider_recordings(self, search):
+        Song.objects.create(id='cached-id', title='Happier', artist='Guster')
+        search.return_value = [
+            {'id': 'cached-id', 'title': 'Happier', 'artist': 'Guster', 'genre': None, 'is_explicit': False, 'recording_details': 'album version'},
+            {'id': 'other-id', 'title': 'Happier', 'artist': 'Guster', 'genre': None, 'is_explicit': False, 'recording_details': 'live version'},
+        ]
+        response = self.client.get(reverse('song_search'), {'q': 'Happier', 'more': '1'})
+        self.assertContains(response, 'MusicBrainz recording: cached-id')
+        self.assertContains(response, 'MusicBrainz recording: other-id')
+        self.assertContains(response, 'live version')
+        self.assertContains(response, 'album version')
+        self.assertEqual(Song.objects.get(pk='cached-id').recording_details, 'album version')
+        self.assertEqual(Song.objects.get(pk='other-id').recording_details, 'live version')
+        self.assertEqual(Song.objects.count(), 2)
+        search.assert_called_once_with('Happier')
+
+    @patch('core.views.MusicBrainzClient.search_songs', side_effect=MusicBrainzError())
+    def test_search_more_keeps_cached_results_when_provider_fails(self, search):
+        Song.objects.create(id='cached-id', title='Happier', artist='Guster')
+        response = self.client.get(reverse('song_search'), {'q': 'Happier', 'more': '1'})
+        self.assertContains(response, 'Happier')
+        self.assertContains(response, 'Showing saved results')
+
     @patch('core.views.MusicBrainzClient.search_songs')
     def test_combined_terms_match_title_and_artist_in_cache(self, search):
         Song.objects.create(title='Dreams', artist='Fleetwood Mac', id='dreams-match')
@@ -770,7 +813,7 @@ class SearchReliabilityTests(TestCase):
             None, {'id': 'valid', 'title': 'Song', 'artist-credit': None}, {'title': 'No ID'},
         ]}
         results = MusicBrainzClient().search_songs('song')
-        self.assertEqual(results, [{'id': 'valid', 'title': 'Song', 'artist': 'Unknown Artist', 'genre': None, 'BPM': None, 'vibe_characteristics': None, 'is_explicit': False}])
+        self.assertEqual(results, [{'id': 'valid', 'title': 'Song', 'artist': 'Unknown Artist', 'genre': None, 'BPM': None, 'vibe_characteristics': None, 'is_explicit': False, 'recording_details': ''}])
 
 
 class RequestIntegrationTests(TestCase):
@@ -1108,7 +1151,7 @@ class RequestMigrationTests(TransactionTestCase):
         return executor.loader.project_state([('core', target)]).apps
 
     def tearDown(self):
-        self.migrate_to('0020_payments_stripe_checkout_session_id_and_more')
+        self.migrate_to('0021_song_recording_details')
         super().tearDown()
 
     def test_song_identifiers_and_related_records_survive_0019(self):

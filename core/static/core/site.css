@@ -225,8 +225,9 @@ form {  /* override user agent stylesheet */
 }
 
 .btn-secondary {
-    border: 1px solid var(--btn-secondary-border);
-    color: var(--text);
+    background: #264333;
+    border: 1px solid #87a983;
+    color: #ffffff;
 }
 
 .hero-note {
@@ -480,6 +481,17 @@ form {  /* override user agent stylesheet */
     display: grid;
     gap: 10px;
     margin-top: 20px
+}
+
+.song-item {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 14px;
+    background: var(--panel2);
+    border: 1px solid var(--metric-border);
+    border-radius: 12px;
 }
 
 .metric-background {
