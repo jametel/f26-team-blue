@@ -13,3 +13,9 @@ Staff can approve requests into the venue queue, move entries within a priority,
 ## Tests
 
 Install `requirements-test.txt` and run `python manage.py test` against PostgreSQL. The test dependencies include an independent QR decoder.
+
+## Demo walkthrough
+
+Prepare a venue, an assigned staff account and a saved song. Open the venue link as a guest, search for the song and submit a request. Missing required metadata follows the venue's unknown-song policy and defaults to staff review. In a separate staff session, select the venue and approve the request. The song appears in the approved queue and the guest sees Approved after refreshing My Requests. Marking played changes a status; it does not play audio.
+
+For a phone to scan a venue QR code, configure `PUBLIC_BASE_URL` and `ALLOWED_HOSTS` as described in `docs/venue-qr-codes.md`. Capture screenshots after rehearsing the flow on the presentation machine.

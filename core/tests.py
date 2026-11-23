@@ -801,6 +801,30 @@ class RequestIntegrationTests(TestCase):
         self.assertEqual(SongRequest.objects.filter(venue_id=venue).count(), 1)
         self.assertTrue(Queue.objects.filter(venue_id=venue, song_request_id=song_request).exists())
 
+    def test_guest_review_approval_and_status_are_scoped_to_the_session(self):
+        staff = make_user('review_staff', roles.STAFF)
+        venue = Venue.objects.create(name='Review venue')
+        venue.staff.add(staff)
+        song = Song.objects.create(id='review-flow-song', title='Review flow song', artist='Artist')
+        guest = self.client_class()
+        guest.get(reverse('select_venue', args=[venue.slug]))
+        response = guest.post(reverse('venue_request_song', args=[venue.slug, song.pk]), follow=True)
+        self.assertContains(response, 'needs staff review')
+        request = SongRequest.objects.get(venue_id=venue, song_id=song)
+        self.assertEqual(request.decisions.get().outcome, SongDecision.Outcome.REVIEW)
+        self.assertFalse(Queue.objects.filter(song_request_id=request).exists())
+
+        outsider = self.client_class()
+        response = outsider.post(reverse('venue_update_request', args=[venue.slug, request.pk]), {'status': 'APPROVED'})
+        self.assertNotEqual(response.status_code, 200)
+        self.assertFalse(Queue.objects.filter(song_request_id=request).exists())
+        staff_client = self.client_class()
+        staff_client.force_login(staff)
+        staff_client.post(reverse('venue_update_request', args=[venue.slug, request.pk]), {'status': 'APPROVED'})
+        self.assertTrue(Queue.objects.filter(venue_id=venue, song_request_id=request).exists())
+        self.assertContains(guest.get(reverse('venue_customer_dashboard', args=[venue.slug])), 'Approved')
+        self.assertNotContains(outsider.get(reverse('venue_customer_dashboard', args=[venue.slug])), 'Review flow song')
+
     def test_guest_request_reaches_the_staff_queue(self):
         staff = make_user('integration_staff', roles.STAFF)
         venue = Venue.objects.create(name='Integration venue')
