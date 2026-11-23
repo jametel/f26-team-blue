@@ -28,3 +28,32 @@ If the original 0005 was already applied, its removal of requester and session f
 Migration 0018 adds request availability. Existing venues start with requests enabled. Disabling new requests does not remove existing requests or queue entries.
 
 The queue migration stops if legacy entries are duplicate, cross-venue, or not approved, so the entries can be resolved without silently deleting data.
+
+## Song identifiers in migration 0019
+
+Migration 0019 has been corrected to copy each old MusicBrainz ID into the song primary key and update related song references in the same transaction before removing the old field. This intentionally changes the existing migration file. Databases that already recorded 0019 will not rerun it. Back up and verify the backup before upgrading. The migration stops rather than guessing if an old ID is empty, longer than 36 characters, or conflicts with another target.
+
+For a database that has not applied 0019, deploy the corrected code before running migrations. Test the upgrade on a restored copy first and verify songs, requests, decisions, features and queue entries. Because the schema and song keys change, restore the backup to undo the upgrade rather than reversing the migration on a populated database.
+
+### Databases that already applied 0019
+
+The removed IDs cannot be recovered from the upgraded database alone. Restore a pre-0019 backup into a separate temporary database and export its song `id` and `musicbrainz_id` columns as a CSV with the header `old_id,musicbrainz_id`. Verify that each old ID still identifies the same song in the current database, including title and artist. Do not assume a backup matches if records were changed or database history differs. The file may contain only the verified songs to restore. On the restored pre-0019 database, this SQL exports the mapping:
+
+```sql
+COPY (SELECT id AS old_id, musicbrainz_id FROM core_song ORDER BY id) TO STDOUT WITH CSV HEADER;
+```
+
+Copy the verified CSV into the web container, then validate it without saving changes. For example, if the file is named `song-map.csv` in the current PowerShell directory:
+
+```powershell
+docker compose cp .\song-map.csv web:/tmp/song-map.csv
+docker compose exec web python manage.py restore_song_identifiers /tmp/song-map.csv
+```
+
+The dry run checks song existence, identifier length and conflicts and rolls the transaction back. After independently verifying the mapping and restoring the backup on a disposable copy to rehearse the operation, apply it to the intended database:
+
+```powershell
+docker compose exec web python manage.py restore_song_identifiers /tmp/song-map.csv --apply
+```
+
+Stop other application writes during recovery. The command updates song keys and all related song foreign keys atomically; collisions or invalid entries stop the operation. Confirm requests, queue entries, decisions and search afterward. Keep the original backup and remove temporary copies only when they are no longer needed. If a mapping is unavailable, the original identifiers cannot be restored reliably; do not invent them.
