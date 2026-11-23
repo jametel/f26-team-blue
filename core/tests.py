@@ -5,6 +5,9 @@ from django.db import IntegrityError, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.loader import MigrationLoader
 from django.core.exceptions import ValidationError
+from django.core.management import call_command
+from django.core.management.base import CommandError
+from tempfile import NamedTemporaryFile
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from concurrent.futures import ThreadPoolExecutor
@@ -284,7 +287,7 @@ class RequestAvailabilityTests(TestCase):
         self.other = make_user('availability_other', roles.STAFF)
         self.venue = Venue.objects.create(name='Availability venue', owner=self.owner)
         self.venue.staff.add(self.staff)
-        self.song = Song.objects.create(title='Available song', artist='Artist', musicbrainz_id='available-song')
+        self.song = Song.objects.create(title='Available song', artist='Artist', id='available-song')
         self.url = reverse('venue_request_availability', args=[self.venue.slug])
         self.request_url = reverse('venue_request_song', args=[self.venue.slug, self.song.pk])
 
@@ -332,7 +335,7 @@ class RequestAvailabilityTests(TestCase):
 
 class RequestFlowTests(TestCase):
     def setUp(self):
-        self.song = Song.objects.create(title="Song A", artist="Artist", musicbrainz_id="mb-1")
+        self.song = Song.objects.create(title="Song A", artist="Artist", id="mb-1")
         self.customer = make_user("cust", roles.CUSTOMER)
         self.staff = make_user("staffer", roles.STAFF)
         self.venue = Venue.objects.create(name='Request venue')
@@ -358,7 +361,7 @@ class RequestFlowTests(TestCase):
         from core.views import MAX_PENDING_PER_PATRON
 
         for i in range(MAX_PENDING_PER_PATRON + 2):
-            song = Song.objects.create(title=f"S{i}", artist="A", musicbrainz_id=f"id-{i}")
+            song = Song.objects.create(title=f"S{i}", artist="A", id=f"id-{i}")
             self.client.post(reverse("request_song", args=[song.id]))
         self.assertEqual(SongRequest.objects.count(), MAX_PENDING_PER_PATRON)
 
@@ -406,11 +409,11 @@ class RequestFlowTests(TestCase):
     @patch("core.views.MusicBrainzClient.search_songs")
     def test_search_can_save_song_with_unknown_features(self, search):
         search.return_value = [{
-            "name": "New song", "artist": {"name": "Artist"}, "musicbrainz_id": "new-id",
+            "title": "New song", "artist": "Artist", "id": "new-id", "genre": None, "is_explicit": False,
         }]
         response = self.client.get(reverse("song_search"), {"q": "New song"})
         self.assertContains(response, "New song")
-        song = Song.objects.get(musicbrainz_id="new-id")
+        song = Song.objects.get(id="new-id")
         self.assertIsNone(get_song_features(song))
 
 
@@ -480,7 +483,7 @@ class VenuePolicyTests(TestCase):
 
 class SongFeaturesTests(TestCase):
     def setUp(self):
-        self.song = Song.objects.create(title='Metadata song', artist='Artist', musicbrainz_id='metadata')
+        self.song = Song.objects.create(title='Metadata song', artist='Artist', id='metadata')
 
     def test_refresh_saves_valid_provider_data(self):
         provider = type('Provider', (), {'fetch': lambda self, song: FeatureData(
@@ -514,7 +517,7 @@ class VenueRequestIsolationTests(TestCase):
         self.venue = Venue.objects.create(name='Venue A', owner=self.owner)
         self.venue.staff.add(self.staff)
         self.other = Venue.objects.create(name='Venue B')
-        self.song = Song.objects.create(title='A song', artist='Artist', musicbrainz_id='venue-song')
+        self.song = Song.objects.create(title='A song', artist='Artist', id='venue-song')
 
     def test_guest_requests_follow_the_venue_in_the_url(self):
         first = reverse('venue_request_song', args=[self.venue.slug, self.song.pk])
@@ -566,7 +569,7 @@ class VibeEngineTests(TestCase):
     def setUp(self):
         self.venue = Venue.objects.create(name='Vibe venue')
         self.config = VenueConfig.objects.create(venue=self.venue, min_bpm=80, max_bpm=120)
-        self.song = Song.objects.create(title='Vibe song', artist='Artist', musicbrainz_id='vibe-song')
+        self.song = Song.objects.create(title='Vibe song', artist='Artist', id='vibe-song')
         self.features = SongFeatures.objects.create(
             song=self.song, source='manual', genre='Jazz', bpm=80, is_explicit=False,
         )
@@ -635,7 +638,7 @@ class QueueTests(TestCase):
         self.venue.staff.add(self.staff)
         self.requests = []
         for index in range(3):
-            song = Song.objects.create(title=f'Song {index}', artist='Artist', musicbrainz_id=f'queue-{index}')
+            song = Song.objects.create(title=f'Song {index}', artist='Artist', id=f'queue-{index}')
             self.requests.append(SongRequest.objects.create(song_id=song, venue_id=self.venue))
 
     def test_approval_order_priority_and_staff_reordering(self):
@@ -694,22 +697,22 @@ class QueueTests(TestCase):
 class SearchReliabilityTests(TestCase):
     @patch('core.views.MusicBrainzClient.search_songs')
     def test_combined_terms_match_title_and_artist_in_cache(self, search):
-        Song.objects.create(title='Dreams', artist='Fleetwood Mac', musicbrainz_id='dreams-match')
-        Song.objects.create(title='Dreams', artist='Other Artist', musicbrainz_id='dreams-other')
+        Song.objects.create(title='Dreams', artist='Fleetwood Mac', id='dreams-match')
+        Song.objects.create(title='Dreams', artist='Other Artist', id='dreams-other')
         venue = Venue.objects.create(name='Search venue')
         response = self.client.get(reverse('venue_song_search', args=[venue.slug]), {'q': '  DREAM fleetwood  '})
         self.assertContains(response, 'Fleetwood Mac')
         self.assertNotContains(response, 'Other Artist')
-        self.assertContains(response, reverse('venue_request_song', args=[venue.slug, Song.objects.get(musicbrainz_id='dreams-match').pk]))
+        self.assertContains(response, reverse('venue_request_song', args=[venue.slug, Song.objects.get(id='dreams-match').pk]))
         search.assert_not_called()
 
     @patch('core.views.MusicBrainzClient.search_songs')
     def test_duplicate_provider_recordings_appear_once(self, search):
-        recording = {'name': 'A unique recording', 'artist': {'name': 'Artist'}, 'musicbrainz_id': 'duplicate-result'}
+        recording = {'title': 'A unique recording', 'artist': 'Artist', 'id': 'duplicate-result', 'genre': None, 'is_explicit': False}
         search.return_value = [recording, recording]
         response = self.client.get(reverse('song_search'), {'q': 'provider query'})
         self.assertContains(response, 'A unique recording', count=1)
-        self.assertEqual(Song.objects.filter(musicbrainz_id='duplicate-result').count(), 1)
+        self.assertEqual(Song.objects.filter(id='duplicate-result').count(), 1)
 
     @patch('core.views.MusicBrainzClient.search_songs', return_value=[])
     def test_no_matches_is_distinct_from_provider_failure(self, search):
@@ -719,17 +722,17 @@ class SearchReliabilityTests(TestCase):
 
     @patch('core.views.MusicBrainzClient.search_songs')
     def test_search_by_artist_uses_local_cache(self, search):
-        Song.objects.create(title='A song', artist='A unique artist', musicbrainz_id='artist-cached')
+        Song.objects.create(title='A song', artist='A unique artist', id='artist-cached')
         response = self.client.get(reverse('song_search'), {'q': 'unique artist'})
         self.assertContains(response, 'A song')
         search.assert_not_called()
 
     @patch('core.views.MusicBrainzClient.search_songs')
     def test_provider_results_are_shown_even_if_query_is_not_in_title(self, search):
-        search.return_value = [{'name': 'Song', 'artist': {'name': 'Artist'}, 'musicbrainz_id': 'provider-match'}]
+        search.return_value = [{'title': 'Song', 'artist': 'Artist', 'id': 'provider-match', 'genre': None, 'is_explicit': False}]
         response = self.client.get(reverse('song_search'), {'q': 'a provider match'})
         self.assertContains(response, 'Song')
-        self.assertTrue(Song.objects.filter(musicbrainz_id='provider-match').exists())
+        self.assertTrue(Song.objects.filter(id='provider-match').exists())
 
     @patch('core.services.musicbrainz.requests.get', side_effect=requests.Timeout())
     def test_timeout_is_reported_as_provider_error(self, get):
@@ -756,7 +759,7 @@ class SearchReliabilityTests(TestCase):
 
     @patch('core.views.MusicBrainzClient.search_songs', side_effect=MusicBrainzError())
     def test_cached_results_are_available_without_the_provider(self, search):
-        Song.objects.create(title='Cached song', artist='Artist', musicbrainz_id='cached')
+        Song.objects.create(title='Cached song', artist='Artist', id='cached')
         response = self.client.get(reverse('song_search'), {'q': 'Cached'})
         self.assertContains(response, 'Cached song')
         search.assert_not_called()
@@ -767,7 +770,7 @@ class SearchReliabilityTests(TestCase):
             None, {'id': 'valid', 'title': 'Song', 'artist-credit': None}, {'title': 'No ID'},
         ]}
         results = MusicBrainzClient().search_songs('song')
-        self.assertEqual(results, [{'name': 'Song', 'artist': {'name': 'Unknown Artist'}, 'musicbrainz_id': 'valid'}])
+        self.assertEqual(results, [{'id': 'valid', 'title': 'Song', 'artist': 'Unknown Artist', 'genre': None, 'BPM': None, 'vibe_characteristics': None, 'is_explicit': False}])
 
 
 class RequestIntegrationTests(TestCase):
@@ -776,8 +779,8 @@ class RequestIntegrationTests(TestCase):
     def test_guest_flow_from_qr_to_queue_and_disabled_requests(self):
         owner = make_user('flow_owner', roles.OWNER)
         venue = Venue.objects.create(name='Flow venue', owner=owner)
-        first_song = Song.objects.create(title='Flow song', artist='Artist', musicbrainz_id='flow-song')
-        second_song = Song.objects.create(title='Other song', artist='Artist', musicbrainz_id='flow-other')
+        first_song = Song.objects.create(title='Flow song', artist='Artist', id='flow-song')
+        second_song = Song.objects.create(title='Other song', artist='Artist', id='flow-other')
         self.client.force_login(owner)
         image = self.client.get(reverse('venue_qr_image', args=[venue.slug]))
         decoded = zxingcpp.read_barcode(Image.open(BytesIO(image.content)))
@@ -803,7 +806,7 @@ class RequestIntegrationTests(TestCase):
         venue = Venue.objects.create(name='Integration venue')
         venue.staff.add(staff)
         VenueConfig.objects.create(venue=venue, min_bpm=80, max_bpm=120)
-        song = Song.objects.create(title='Integration song', artist='Artist', musicbrainz_id='integration')
+        song = Song.objects.create(title='Integration song', artist='Artist', id='integration')
         SongFeatures.objects.create(song=song, source='manual', bpm=100, is_explicit=False)
 
         self.client.get(reverse('select_venue', args=[venue.slug]))
@@ -819,6 +822,7 @@ class RequestIntegrationTests(TestCase):
         staff_client.login(username='integration_staff', password=PASSWORD)
         staff_client.post(reverse('venue_update_request', args=[venue.slug, song_request.pk]), {'status': 'APPROVED'})
         self.assertTrue(Queue.objects.filter(venue_id=venue, song_request_id=song_request).exists())
+        self.assertContains(self.client.get(reverse('venue_customer_dashboard', args=[venue.slug])), 'Approved')
         staff_client.post(reverse('venue_update_request', args=[venue.slug, song_request.pk]), {'status': 'PLAYED'})
         song_request.refresh_from_db()
         self.assertEqual(song_request.status, SongRequest.PLAYED)
@@ -831,7 +835,7 @@ class RequestSubmissionConcurrencyTests(TransactionTestCase):
         for role in roles.ROLES:
             Group.objects.get_or_create(name=role)
         self.venue = Venue.objects.create(name='Concurrent requests')
-        self.songs = [Song.objects.create(title=f'Concurrent {i}', artist='Artist', musicbrainz_id=f'limit-{i}') for i in range(7)]
+        self.songs = [Song.objects.create(title=f'Concurrent {i}', artist='Artist', id=f'limit-{i}') for i in range(7)]
 
     def guest_clients(self):
         first = self.client_class()
@@ -944,7 +948,7 @@ class AvailabilityConcurrencyTests(TransactionTestCase):
             Group.objects.get_or_create(name=role)
         owner = make_user('concurrent_owner', roles.OWNER)
         venue = Venue.objects.create(name='Concurrent availability', owner=owner)
-        song = Song.objects.create(title='Concurrent song', artist='Artist', musicbrainz_id='concurrent-availability')
+        song = Song.objects.create(title='Concurrent song', artist='Artist', id='concurrent-availability')
         guest = self.client_class()
         owner_client = self.client_class()
         owner_client.force_login(owner)
@@ -1000,7 +1004,7 @@ class QueueConcurrencyTests(TransactionTestCase):
         venue = Venue.objects.create(name='Concurrent venue')
         requests = []
         for index in range(2):
-            song = Song.objects.create(title=f'Song {index}', artist='Artist', musicbrainz_id=f'concurrent-{index}')
+            song = Song.objects.create(title=f'Song {index}', artist='Artist', id=f'concurrent-{index}')
             requests.append(SongRequest.objects.create(song_id=song, venue_id=venue))
         barrier = Barrier(2)
 
@@ -1019,6 +1023,58 @@ class QueueConcurrencyTests(TransactionTestCase):
         self.assertEqual(list(Queue.objects.filter(venue_id=venue).order_by('position').values_list('position', flat=True)), [1, 2])
 
 
+class SongIdentifierRecoveryTests(TransactionTestCase):
+    def test_recovery_dry_run_and_apply_preserve_request(self):
+        song = Song.objects.create(id='1', title='Legacy', artist='Artist')
+        venue = Venue.objects.create(name='Recovery venue')
+        request = SongRequest.objects.create(song_id=song, venue_id=venue)
+        with NamedTemporaryFile(mode='w', suffix='.csv', encoding='utf-8', delete=False) as mapping:
+            mapping.write('old_id,musicbrainz_id\n1,recording-one\n')
+            path = mapping.name
+        try:
+            call_command('restore_song_identifiers', path, verbosity=0)
+            self.assertTrue(Song.objects.filter(pk='1').exists())
+            call_command('restore_song_identifiers', path, apply=True, verbosity=0)
+            request.refresh_from_db()
+            self.assertEqual(request.song_id_id, 'recording-one')
+        finally:
+            from pathlib import Path
+            Path(path).unlink()
+
+
+    def test_recovery_can_swap_existing_song_identifiers(self):
+        first = Song.objects.create(id='1', title='First', artist='Artist')
+        second = Song.objects.create(id='2', title='Second', artist='Artist')
+        venue = Venue.objects.create(name='Swap venue')
+        request = SongRequest.objects.create(song_id=first, venue_id=venue)
+        with NamedTemporaryFile(mode='w', suffix='.csv', encoding='utf-8', delete=False) as mapping:
+            mapping.write('old_id,musicbrainz_id\n1,2\n2,1\n')
+            path = mapping.name
+        try:
+            call_command('restore_song_identifiers', path, apply=True, verbosity=0)
+            request.refresh_from_db()
+            self.assertEqual(request.song_id_id, '2')
+            self.assertEqual(Song.objects.get(pk='2').title, 'First')
+            self.assertEqual(Song.objects.get(pk='1').title, 'Second')
+        finally:
+            from pathlib import Path
+            Path(path).unlink()
+
+    def test_invalid_or_colliding_mapping_leaves_data_unchanged(self):
+        Song.objects.create(id='1', title='First', artist='Artist')
+        Song.objects.create(id='existing', title='Second', artist='Artist')
+        with NamedTemporaryFile(mode='w', suffix='.csv', encoding='utf-8', delete=False) as mapping:
+            mapping.write('old_id,musicbrainz_id\n1,existing\n')
+            path = mapping.name
+        try:
+            with self.assertRaises(CommandError):
+                call_command('restore_song_identifiers', path, apply=True, verbosity=0)
+            self.assertEqual(set(Song.objects.values_list('pk', flat=True)), {'1', 'existing'})
+        finally:
+            from pathlib import Path
+            Path(path).unlink()
+
+
 class RequestMigrationTests(TransactionTestCase):
     def migrate_to(self, target, replace_migrations=True):
         executor = MigrationExecutor(connection)
@@ -1028,8 +1084,25 @@ class RequestMigrationTests(TransactionTestCase):
         return executor.loader.project_state([('core', target)]).apps
 
     def tearDown(self):
-        self.migrate_to('0018_venue_requests_enabled')
+        self.migrate_to('0020_payments_stripe_checkout_session_id_and_more')
         super().tearDown()
+
+    def test_song_identifiers_and_related_records_survive_0019(self):
+        old = self.migrate_to('0018_venue_requests_enabled')
+        venue = old.get_model('core', 'Venue').objects.create(name='Migration venue', slug='migration-venue')
+        song = old.get_model('core', 'Song').objects.create(title='Old', artist='Artist', musicbrainz_id='recording-one')
+        other = old.get_model('core', 'Song').objects.create(title='Other', artist='Artist', musicbrainz_id='recording-two')
+        request = old.get_model('core', 'SongRequest').objects.create(song_id=song, venue_id=venue, status='APPROVED')
+        old.get_model('core', 'Queue').objects.create(venue_id=venue, song_request_id=request, position=1)
+        old.get_model('core', 'SongFeatures').objects.create(song=song, source='manual')
+        old.get_model('core', 'VenueSongBlacklist').objects.create(venue_id=venue, song_id=other)
+        old.get_model('core', 'SongDecision').objects.create(venue=venue, song=song, request=request, outcome='ACCEPT')
+        current = self.migrate_to('0019_remove_song_musicbrainz_id_song_bpm_song_genre_and_more')
+        self.assertEqual(current.get_model('core', 'SongRequest').objects.get(pk=request.pk).song_id_id, 'recording-one')
+        self.assertTrue(current.get_model('core', 'SongFeatures').objects.filter(song_id='recording-one').exists())
+        self.assertTrue(current.get_model('core', 'SongDecision').objects.filter(song_id='recording-one', request_id=request.pk).exists())
+        self.assertTrue(current.get_model('core', 'VenueSongBlacklist').objects.filter(song_id_id='recording-two').exists())
+        self.assertTrue(current.get_model('core', 'Queue').objects.filter(song_request_id_id=request.pk).exists())
 
     def test_request_availability_upgrade_keeps_existing_venues_enabled(self):
         old = self.migrate_to('0017_queue_constraints')
