@@ -23,6 +23,13 @@
 <section class="results">
     <div class="results-heading"><h2>Song search</h2></div>
     {% if results %}
+        {% if search_error %}<p>Music search is temporarily unavailable. Showing saved results.</p>{% endif %}
+        {% if not searched_provider %}
+        <form method="get" class="action-form">
+            <input type="hidden" name="q" value="{{ query }}">
+            <button type="submit" name="more" value="1" class="btn btn-secondary">Search more songs</button>
+        </form>
+        {% endif %}
         <div class="song-list">
             {% for song in results %}
                 <article class="song-item">
@@ -30,6 +37,8 @@
                     <div class="song-info">
                         <h3>{{ song.title }}{% if song.is_explicit %} <span class="badge">E</span>{% endif %}</h3>
                         <p>{{ song.artist }}{% if song.genre %} · {{ song.genre }}{% endif %}</p>
+                        {% if song.recording_details %}<p>{{ song.recording_details }}</p>{% endif %}
+                        {% if song.show_recording_id %}<p>{% if song.legacy_id %}Local song ID{% else %}MusicBrainz recording{% endif %}: {{ song.id }}</p>{% endif %}
                     </div>
                     {% if venue and venue.requests_enabled and song.id %}
                         <form method="post" action="{% url 'venue_request_song' venue.slug song.id %}" class="action-form">

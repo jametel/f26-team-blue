@@ -51,11 +51,17 @@ class MusicBrainzClient:
                 "title": title.strip(),
                 "artist": self._artist_name(rec),
                 "genre": self._top_genre(rec),
+                "recording_details": self._recording_details(rec),
                 "BPM": None,                   # not provided by MusicBrainz
                 "vibe_characteristics": None,  # not provided by MusicBrainz
                 "is_explicit": self._is_explicit(rec),
             })
         return songs
+
+    @staticmethod
+    def _recording_details(rec):
+        details = rec.get("disambiguation")
+        return details.strip()[:255] if isinstance(details, str) else ""
 
     @staticmethod
     def _artist_name(rec):

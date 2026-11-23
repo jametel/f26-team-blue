@@ -14,7 +14,7 @@ class VibeDecision:
 def evaluate_request(venue, song):
     config = VenueConfig.objects.filter(venue=venue).first() or VenueConfig(venue=venue)
     features = get_song_features(song)
-    trusted = features is not None and features.source != 'legacy-unverified'
+    trusted = bool(features and features.source and 'unverified' not in features.source.casefold())
     genre = features.genre.strip().casefold() if trusted and features.genre else None
     bpm = features.bpm if trusted and features.bpm and features.bpm > 0 else None
     explicit = features.is_explicit if trusted else None
